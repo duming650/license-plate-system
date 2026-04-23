@@ -1,16 +1,13 @@
 @echo off
-echo Starting License Plate Recognition System...
+echo ========================================
+echo   车牌识别系统
+echo ========================================
+echo.
+echo Starting Next.js server...
 echo.
 
-REM Check Node.js
-where node >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Node.js not found!
-    pause
-    exit /b 1
-)
+cd /d "%~dp0"
 
-REM Start Next.js
-npx next dev
+npx next dev --no-turbo
 
 pause

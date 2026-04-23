@@ -13,6 +13,7 @@ const PYTHON_PATHS = [
   'C:\\Python\\python.exe',
   'C:\\Program Files\\Python311\\python.exe',
   'C:\\Program Files (x86)\\Python\\python.exe',
+  'D:\\Python\\python.exe',
 ];
 
 // 查找可用的 Python
@@ -29,7 +30,7 @@ function findPython(): string | null {
 }
 
 /**
- * 调用 Python 脚本进行车辆检测和车牌识别
+ * 调用 Python 脚本进行车牌识别
  */
 export async function callPythonRecognition(
   imagePath: string
@@ -42,7 +43,6 @@ export async function callPythonRecognition(
   error?: string;
 }> {
   return new Promise((resolve) => {
-    // 查找 Python
     const pythonPath = findPython();
     
     if (!pythonPath) {
@@ -52,7 +52,7 @@ export async function callPythonRecognition(
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: 'Python not found. Please install Python 3.8+',
+        error: 'Python not found',
       });
       return;
     }
@@ -72,7 +72,7 @@ export async function callPythonRecognition(
       return;
     }
 
-    // 确保图片存在
+    // 检查图片是否存在
     if (!fs.existsSync(imagePath)) {
       resolve({
         success: false,
@@ -80,17 +80,16 @@ export async function callPythonRecognition(
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: `Image not found: ${imagePath}`,
+        error: 'Image not found',
       });
       return;
     }
 
-    console.log(`[Python] Calling script: ${scriptPath}`);
-    console.log(`[Python] Image path: ${imagePath}`);
+    console.log(`[Python] Running: ${pythonPath} ${scriptPath} ${imagePath}`);
 
-    // 调用 Python 脚本
     const python = spawn(pythonPath, [scriptPath, imagePath], {
       windowsHide: true,
+      timeout: 30000,
     });
 
     let stdout = '';
@@ -101,69 +100,51 @@ export async function callPythonRecognition(
     });
 
     python.stderr.on('data', (data: Buffer) => {
-      const msg = data.toString();
-      // 打印调试信息
-      console.log(`[Python] ${msg}`);
-      stderr += msg;
+      stderr += data.toString();
     });
 
     python.on('error', (error: Error) => {
-      console.error('[Python] Start failed:', error);
+      console.error('[Python] Error:', error.message);
       resolve({
         success: false,
         hasVehicle: false,
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: `Python start failed: ${error.message}`,
+        error: error.message,
       });
     });
 
     python.on('close', (code: number) => {
-      console.log(`[Python] Script exited with code: ${code}`);
+      console.log(`[Python] Exit code: ${code}`);
       
-      if (code === 0 && stdout) {
+      if (stdout) {
         try {
           const result = JSON.parse(stdout);
-          console.log('[Python] Result:', result);
           resolve(result);
-        } catch (e) {
-          console.error('[Python] Parse failed:', stdout);
+        } catch {
           resolve({
             success: false,
             hasVehicle: false,
             hasPerson: false,
             plateNumber: null,
             confidence: 0,
-            error: 'Parse result failed',
+            error: 'Failed to parse result',
           });
         }
       } else {
-        // 检查是否需要安装依赖
-        let errorMsg = 'Python script execution failed';
-        if (stderr.includes('need_install') || stderr.includes('not installed')) {
-          errorMsg = 'Python dependencies not installed. Please run: scripts\\install_deps.bat';
-        } else if (stderr) {
-          // 从 stderr 提取错误信息
-          const match = stderr.match(/error[:\s]*(.+)/i);
-          if (match) {
-            errorMsg = match[1].trim();
-          }
-        }
-        
-        console.error('[Python] Error:', errorMsg);
         resolve({
           success: false,
           hasVehicle: false,
           hasPerson: false,
           plateNumber: null,
           confidence: 0,
-          error: errorMsg,
+          error: stderr || 'Script failed',
         });
       }
     });
 
-    // 60秒超时
+    // 30秒超时
     setTimeout(() => {
       python.kill();
       resolve({
@@ -172,9 +153,9 @@ export async function callPythonRecognition(
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: 'Recognition timeout (60s)',
+        error: 'Timeout',
       });
-    }, 60000);
+    }, 30000);
   });
 }
 
@@ -184,37 +165,21 @@ export async function callPythonRecognition(
 export async function checkPythonEnv(): Promise<{
   available: boolean;
   version?: string;
-  hasOpenCV?: boolean;
-  hasPaddleOCR?: boolean;
   error?: string;
 }> {
-  return new Promise((resolve) => {
-    const pythonPath = findPython();
-    
-    if (!pythonPath) {
-      resolve({
-        available: false,
-        error: 'Python not found. Please install Python 3.8+',
-      });
-      return;
-    }
+  const pythonPath = findPython();
+  
+  if (!pythonPath) {
+    return { available: false, error: 'Python not found' };
+  }
 
-    // 获取 Python 版本
-    try {
-      const version = execSync(`"${pythonPath}" --version`, {
-        encoding: 'utf-8',
-        windowsHide: true,
-      }).trim();
-      
-      resolve({
-        available: true,
-        version,
-      });
-    } catch {
-      resolve({
-        available: false,
-        error: 'Cannot get Python version',
-      });
-    }
-  });
+  try {
+    const version = execSync(`"${pythonPath}" --version`, {
+      encoding: 'utf-8',
+      windowsHide: true,
+    }).trim();
+    return { available: true, version };
+  } catch {
+    return { available: false, error: 'Cannot get Python version' };
+  }
 }
