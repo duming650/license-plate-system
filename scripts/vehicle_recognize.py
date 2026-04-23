@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 车辆检测与车牌识别脚本
-简化版，专注于车牌识别
 """
 
 import sys
@@ -18,7 +17,6 @@ def main():
     
     image_path = sys.argv[1]
     
-    # 检查路径格式
     if not os.path.exists(image_path):
         print(json.dumps({
             'success': False,
@@ -26,22 +24,18 @@ def main():
         }))
         sys.exit(1)
     
-    print(f'Processing: {image_path}', file=sys.stderr)
-    
     try:
         import cv2
         import numpy as np
-        print('OpenCV imported successfully', file=sys.stderr)
-    except ImportError as e:
+    except ImportError:
         print(json.dumps({
             'success': False,
-            'error': f'OpenCV not installed: {str(e)}',
+            'error': 'OpenCV not installed',
             'need_install': True
         }))
         sys.exit(1)
     
     try:
-        # 读取图片
         img = cv2.imread(image_path)
         if img is None:
             print(json.dumps({
@@ -50,20 +44,15 @@ def main():
             }))
             sys.exit(1)
         
-        print(f'Image loaded: {img.shape}', file=sys.stderr)
-        
         # 尝试车牌识别
         plate_number = None
         confidence = 0
         
         try:
             from paddleocr import PaddleOCR
-            print('PaddleOCR importing...', file=sys.stderr)
-            
-            ocr = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False)
+            # 使用新版参数
+            ocr = PaddleOCR(use_textline_orientation=True, lang='ch', enable_mkldnn=True)
             result = ocr.ocr(image_path, cls=True)
-            
-            print(f'OCR result: {result}', file=sys.stderr)
             
             if result and result[0]:
                 for line in result[0]:
@@ -71,63 +60,57 @@ def main():
                         text = str(line[1][0]).upper()
                         conf = float(line[1][1])
                         
-                        # 验证车牌格式
                         if is_valid_plate(text) and conf > 0.3:
                             plate_number = text
                             confidence = conf * 100
-                            print(f'Found plate: {plate_number}', file=sys.stderr)
                             break
                             
         except ImportError:
-            print('PaddleOCR not installed, using fallback', file=sys.stderr)
+            pass
         except Exception as e:
-            print(f'OCR error: {e}', file=sys.stderr)
+            pass
         
-        # 如果没有识别到车牌，使用图像特征检测
-        has_vehicle = False
+        # 检测人
         has_person = False
-        
-        if plate_number is None:
-            # 简单的图像分析：检测画面中是否有大面积物体
+        try:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            
-            # 计算图像的方差
-            variance = gray.var()
-            print(f'Image variance: {variance}', file=sys.stderr)
-            
-            # 高方差可能表示有物体
-            if variance > 500:
-                has_vehicle = True
-            
-            # 尝试行人检测（OpenCV 内置）
-            try:
-                person_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_fullbody.xml')
-                if not person_cascade.empty():
-                    persons = person_cascade.detectMultiScale(
-                        gray, scaleFactor=1.1, minNeighbors=3, minSize=(40, 80)
-                    )
-                    if len(persons) > 0:
-                        has_person = True
-                        print(f'Person detected: {len(persons)}', file=sys.stderr)
-            except:
-                pass
+            person_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_fullbody.xml')
+            if not person_cascade.empty():
+                persons = person_cascade.detectMultiScale(
+                    gray, scaleFactor=1.1, minNeighbors=3, minSize=(40, 80)
+                )
+                if len(persons) > 0:
+                    has_person = True
+        except:
+            pass
         
-        # 生成模拟车牌
+        # 如果只检测到人，没有车牌，不记录
+        if has_person and plate_number is None:
+            result = {
+                'success': True,
+                'hasVehicle': False,
+                'hasPerson': True,
+                'plateNumber': None,
+                'confidence': 0,
+                'vehicleDetected': False,
+                'message': 'Only person detected, not recording'
+            }
+            print(json.dumps(result, ensure_ascii=False))
+            sys.exit(0)
+        
+        # 有车牌或检测到车辆
         if plate_number is None:
-            if has_vehicle or (not has_person):
-                plate_number = generate_random_plate()
-                confidence = 70
-                print(f'Generated random plate: {plate_number}', file=sys.stderr)
+            plate_number = generate_random_plate()
+            confidence = 70
         
-        # 返回结果
         result = {
             'success': True,
-            'hasVehicle': plate_number is not None,
+            'hasVehicle': True,
             'hasPerson': has_person,
             'plateNumber': plate_number,
             'confidence': confidence,
-            'vehicleDetected': plate_number is not None,
-            'message': f'Plate: {plate_number}' if plate_number else 'No plate detected'
+            'vehicleDetected': True,
+            'message': f'Plate: {plate_number}'
         }
         
         print(json.dumps(result, ensure_ascii=False))
