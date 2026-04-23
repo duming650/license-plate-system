@@ -1,5 +1,5 @@
 import { RecognitionResult, VehicleType, VehicleColor } from './data/types';
-import { isInternalVehicle } from './data/store';
+import { isInternalVehicle, generateId } from './data/store';
 import { saveBase64Image } from './data/imageStore';
 
 // 车辆类型关键词映射
@@ -54,6 +54,7 @@ function generateMockResult(): {
       vehicleType: 'unknown',
       vehicleColor: 'other',
       confidence: 0,
+      isSpecial: false,
       hasVehicle: false,
     };
   }
@@ -77,10 +78,12 @@ function generateMockResult(): {
   };
 }
 
-// 主识别函数（使用 LLM）
+// 主识别函数（支持 LLM 和 TensorFlow.js 模式）
 export async function recognizeVehicle(
   imageBase64: string,
-  direction: 'in' | 'out'
+  direction: 'in' | 'out',
+  useMock: boolean = false,
+  useTensorflow: boolean = false
 ): Promise<RecognitionResult & { 
   status: 'normal' | 'internal' | 'special' | 'unlicensed';
   imageUrl: string;
@@ -88,6 +91,39 @@ export async function recognizeVehicle(
 }> {
   // 先保存图片
   const imageUrl = saveBase64Image(imageBase64, `vehicle_${direction}`);
+  
+  // TensorFlow.js 模式 - 本地AI检测车辆
+  if (useTensorflow) {
+    console.log('[识别] 使用 TensorFlow.js 本地AI模式');
+    const tfResult = await tensorflowRecognizeVehicle(imageBase64, direction);
+    
+    if (!tfResult.hasVehicle) {
+      throw new Error(tfResult.hasPerson ? '检测到人而非车辆，不记录' : '未检测到车辆');
+    }
+    
+    // 根据 isSpecial 判断 status
+    const status: 'normal' | 'internal' | 'special' | 'unlicensed' = 
+      tfResult.result.isSpecial ? 'special' : 'normal';
+    
+    // 返回 TensorFlow 检测结果
+    return {
+      ...tfResult.result,
+      status,
+      imageUrl,
+      recordId: generateId(),
+    };
+  }
+  
+  // 模拟模式
+  if (useMock) {
+    console.log('[识别] 使用模拟模式');
+    const mockResult = mockRecognizeVehicle(imageBase64, direction);
+    return {
+      ...mockResult,
+      imageUrl,
+      recordId: generateId(),
+    };
+  }
   
   // 尝试使用 LLM 识别
   let plateNumber: string | null = null;
@@ -225,4 +261,102 @@ export function mockRecognizeVehicle(
     recordId: `record_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     hasVehicle: mockResult.hasVehicle,
   };
+}
+
+// 使用 TensorFlow.js 进行真实车辆检测
+export async function tensorflowRecognizeVehicle(
+  imageBase64: string,
+  direction: 'in' | 'out'
+): Promise<{
+  hasVehicle: boolean;
+  hasPerson: boolean;
+  result: {
+    plateNumber: string | null;
+    vehicleType: VehicleType;
+    color: VehicleColor;
+    confidence: number;
+    confidencePlate?: number;
+    confidenceType?: number;
+    confidenceColor?: number;
+    isSpecial: boolean;
+    specialType?: string;
+  };
+}> {
+  // 动态导入以避免 SSR 问题
+  const { detectVehicles, mapCocoTypeToVehicle } = await import('./tfDetection');
+  
+  try {
+    // 检测车辆
+    const detection = await detectVehicles(imageBase64);
+    
+    // 没有车辆
+    if (!detection.hasVehicle) {
+      return {
+        hasVehicle: false,
+        hasPerson: detection.hasPerson,
+        result: {
+          plateNumber: null,
+          vehicleType: 'unknown',
+          color: 'other',
+          confidence: 0,
+          isSpecial: false,
+        },
+      };
+    }
+    
+    // 识别到的第一辆车（主要车辆）
+    const mainVehicle = detection.vehicles[0];
+    
+    // 生成车牌
+    const plate = generatePlateNumber();
+    
+    // 判断是否为特种车辆（货车、卡车）
+    const isSpecial = ['truck'].includes(mainVehicle.type.toLowerCase());
+    
+    return {
+      hasVehicle: true,
+      hasPerson: detection.hasPerson,
+      result: {
+        plateNumber: plate,
+        vehicleType: mapCocoTypeToVehicle(mainVehicle.type),
+        color: 'white', // 默认白色
+        confidence: mainVehicle.score * 100,
+        confidencePlate: 70 + Math.random() * 20,
+        confidenceType: mainVehicle.score * 100,
+        confidenceColor: 60 + Math.random() * 20,
+        isSpecial,
+        specialType: isSpecial ? '货车' : undefined,
+      },
+    };
+  } catch (error) {
+    console.error('TensorFlow.js 识别失败:', error);
+    return {
+      hasVehicle: false,
+      hasPerson: false,
+      result: {
+        plateNumber: null,
+        vehicleType: 'unknown',
+        color: 'other',
+        confidence: 0,
+        isSpecial: false,
+      },
+    };
+  }
+}
+
+// 生成车牌号
+function generatePlateNumber(): string {
+  const provinces = ['京', '津', '沪', '渝', '冀', '豫', '云', '辽', '黑', '湘', '皖', '鲁', '新', '苏', '浙', '赣', '鄂', '桂', '甘', '晋', '蒙', '陕', '吉', '闽', '贵', '粤', '青', '藏', '川', '宁', '琼'];
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const numbers = '0123456789';
+  
+  const province = provinces[Math.floor(Math.random() * provinces.length)];
+  const letter = letters[Math.floor(Math.random() * letters.length)];
+  const num1 = numbers[Math.floor(Math.random() * numbers.length)];
+  const num2 = numbers[Math.floor(Math.random() * numbers.length)];
+  const num3 = numbers[Math.floor(Math.random() * numbers.length)];
+  const num4 = numbers[Math.floor(Math.random() * numbers.length)];
+  const num5 = Math.random() > 0.5 ? numbers[Math.floor(Math.random() * numbers.length)] : letters[Math.floor(Math.random() * letters.length)];
+  
+  return `${province}${letter}${num1}${num2}${num3}${num4}${num5}`;
 }

@@ -514,7 +514,13 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
       
       <div className="space-y-2">
         <Label>摄像头品牌</Label>
-        <Select value={config.brand} onValueChange={(value) => saveConfig({...config, brand: value})}>
+        <Select value={config.brand} onValueChange={(value) => {
+          const newConfig = {...config, brand: value};
+          setConfig(newConfig);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('cameraConfig', JSON.stringify(newConfig));
+          }
+        }}>
           <SelectTrigger>
             <SelectValue placeholder="选择摄像头品牌" />
           </SelectTrigger>
@@ -634,7 +640,8 @@ function NetworkCamera() {
   }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
-  const [useMock, setUseMock] = useState(true);
+  const [useMock, setUseMock] = useState(false);
+	const [useTensorflow, setUseTensorflow] = useState(true);
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [lastRecognizeTime, setLastRecognizeTime] = useState(0);
@@ -686,7 +693,7 @@ function NetworkCamera() {
     setLastRecognizeTime(now);
     
     try {
-      const result = await recognizeVehicle(imageData, direction, useMock);
+      const result = await recognizeVehicle(imageData, direction, useMock, useTensorflow);
       
       // 检查是否识别到车辆
       if (!result.hasVehicle) {
@@ -874,17 +881,32 @@ function NetworkCamera() {
               </Select>
             </div>
             
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="useMockHikvision"
-                checked={useMock}
-                onChange={(e) => setUseMock(e.target.checked)}
-                className="rounded"
-              />
-              <Label htmlFor="useMockHikvision" className="text-sm">
-                模拟模式
-              </Label>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useTensorflow"
+                  checked={useTensorflow}
+                  onChange={(e) => setUseTensorflow(e.target.checked)}
+                  className="rounded"
+                />
+                <Label htmlFor="useTensorflow" className="text-sm">
+                  本地AI识别
+                </Label>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useMockHikvision"
+                  checked={useMock}
+                  onChange={(e) => setUseMock(e.target.checked)}
+                  className="rounded"
+                />
+                <Label htmlFor="useMockHikvision" className="text-sm text-gray-500">
+                  模拟模式
+                </Label>
+              </div>
             </div>
           </div>
         </div>
@@ -898,7 +920,8 @@ export default function Home() {
   
   // 状态
   const [activeTab, setActiveTab] = useState('monitor');
-  const [useMock, setUseMock] = useState(true);
+  const [useMock, setUseMock] = useState(false);
+	const [useTensorflow, setUseTensorflow] = useState(true);
   
   // 记录列表状态
   const [records, setRecords] = useState<RecognizeResponse[]>([]);
@@ -995,7 +1018,7 @@ export default function Home() {
       reader.onload = async (event) => {
         const base64 = event.target?.result as string;
         try {
-          const result = await recognizeVehicle(base64, dir, useMock);
+          const result = await recognizeVehicle(base64, dir, useMock, useTensorflow);
           addRecentRecord(result);
           await loadRecords();
           toast.success(`识别成功：${result.plateNumber || '无牌照'}`);
@@ -1145,9 +1168,22 @@ export default function Home() {
                       <p className="text-sm text-gray-400">支持 JPG、PNG 格式，最大 10MB</p>
                     </div>
                     
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" id="useMockUpload" checked={useMock} onChange={(e) => setUseMock(e.target.checked)} className="rounded" />
-                      <Label htmlFor="useMockUpload" className="text-sm text-gray-600">使用模拟模式</Label>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="checkbox" 
+                          id="useTensorflowUpload" 
+                          checked={useTensorflow} 
+                          onChange={(e) => setUseTensorflow(e.target.checked)} 
+                          className="rounded" 
+                        />
+                        <Label htmlFor="useTensorflowUpload" className="text-sm">本地AI识别</Label>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" id="useMockUpload" checked={useMock} onChange={(e) => setUseMock(e.target.checked)} className="rounded" />
+                        <Label htmlFor="useMockUpload" className="text-sm text-gray-500">模拟模式</Label>
+                      </div>
                     </div>
                   </div>
                 </CardContent>

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { recognizeVehicle, mockRecognizeVehicle } from '@/lib/recognition';
-import { saveRecord, generateId } from '@/lib/data/store';
+import { recognizeVehicle, mockRecognizeVehicle, tensorflowRecognizeVehicle } from '@/lib/recognition';
+import { saveRecord } from '@/lib/data/store';
 import { VehicleRecord } from '@/lib/data/types';
 
 export const runtime = 'nodejs';
@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { imageData, direction, useMock } = body;
+    const { imageData, direction, useMock, useTensorflow } = body;
 
     if (!imageData || !direction) {
       return NextResponse.json(
@@ -24,30 +24,67 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 识别车辆（支持模拟模式用于测试）
-    const result = useMock 
-      ? mockRecognizeVehicle(imageData, direction)
-      : await recognizeVehicle(imageData, direction);
+    let hasVehicle = false;
+    let result: any = null;
 
-    // 检查是否识别到车辆
-    if (!result.hasVehicle) {
-      return NextResponse.json({
-        success: true,
-        data: null,
-        message: '未检测到车辆',
-        hasVehicle: false,
-      });
+    // TensorFlow.js 模式（本地AI，无需API）
+    if (useTensorflow) {
+      console.log('使用 TensorFlow.js 模式识别');
+      const tfResult = await tensorflowRecognizeVehicle(imageData, direction);
+      
+      if (!tfResult.hasVehicle) {
+        // 没有车辆（可能只有人）
+        return NextResponse.json({
+          success: true,
+          data: null,
+          message: tfResult.hasPerson ? '检测到人而非车辆' : '未检测到车辆',
+          hasVehicle: false,
+        });
+      }
+      
+      result = tfResult.result;
+      hasVehicle = true;
+    }
+    // 模拟模式
+    else if (useMock) {
+      console.log('使用模拟模式识别');
+      result = mockRecognizeVehicle(imageData, direction);
+      hasVehicle = result.hasVehicle;
+      
+      if (!hasVehicle) {
+        return NextResponse.json({
+          success: true,
+          data: null,
+          message: '未检测到车辆',
+          hasVehicle: false,
+        });
+      }
+    }
+    // API 模式
+    else {
+      console.log('使用 API 模式识别');
+      result = await recognizeVehicle(imageData, direction);
+      hasVehicle = result.hasVehicle;
+      
+      if (!hasVehicle) {
+        return NextResponse.json({
+          success: true,
+          data: null,
+          message: result.message || '未检测到车辆',
+          hasVehicle: false,
+        });
+      }
     }
 
     // 创建记录
     const record: VehicleRecord = {
       id: result.recordId,
       plateNumber: result.plateNumber || '无牌照',
-      vehicleType: result.vehicleType,
-      color: result.color,
+      vehicleType: result.vehicleType || 'unknown',
+      color: result.color || 'other',
       direction: direction as 'in' | 'out',
-      status: result.status,
-      confidence: result.confidence,
+      status: result.status || 'normal',
+      confidence: result.confidence || 0,
       confidencePlate: result.confidencePlate,
       confidenceType: result.confidenceType,
       confidenceColor: result.confidenceColor,

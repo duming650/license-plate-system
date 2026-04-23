@@ -101,7 +101,8 @@ function generateSummary(records: any[], startDate?: string, endDate?: string) {
   filteredRecords.forEach(record => {
     const dateStr = record.createdAt.split('T')[0];
     if (dailyStats[dateStr]) {
-      dailyStats[dateStr][record.direction]++;
+      const dir = record.direction as 'in' | 'out';
+      dailyStats[dateStr][dir]++;
       dailyStats[dateStr].total++;
     }
   });
@@ -116,7 +117,8 @@ function generateSummary(records: any[], startDate?: string, endDate?: string) {
     .filter(r => new Date(r.createdAt).toDateString() === today)
     .forEach(record => {
       const hour = new Date(record.createdAt).getHours();
-      hourlyStats[hour][record.direction]++;
+      const dir = record.direction as 'in' | 'out';
+      hourlyStats[hour][dir]++;
       hourlyStats[hour].total++;
     });
 
@@ -171,11 +173,11 @@ function generateExcel(summary: ReturnType<typeof generateSummary>) {
   XLSX.utils.book_append_sheet(wb, overviewWs, '总体统计');
 
   // 2. 按日统计表
-  const dailyData = [
+  const dailyData: (string | number)[][] = [
     ['日期', '驶入', '驶出', '合计'],
   ];
-  Object.entries(summary.dailyStats)
-    .sort(([a], [b]) => a.localeCompare(b))
+  Object.entries(summary.dailyStats as Record<string, { in: number; out: number; total: number }>)
+    .sort(([a], [b]) => (a as string).localeCompare(b as string))
     .forEach(([date, stats]) => {
     dailyData.push([date, stats.in, stats.out, stats.total]);
   });
@@ -184,11 +186,11 @@ function generateExcel(summary: ReturnType<typeof generateSummary>) {
   XLSX.utils.book_append_sheet(wb, dailyWs, '按日统计');
 
   // 3. 按小时统计表（今日）
-  const hourlyData = [
+  const hourlyData: (string | number)[][] = [
     ['小时', '驶入', '驶出', '合计'],
   ];
   for (let i = 0; i < 24; i++) {
-    const stats = summary.hourlyStats[i];
+    const stats = summary.hourlyStats[i as unknown as number] || { in: 0, out: 0, total: 0 };
     hourlyData.push([`${i.toString().padStart(2, '0')}:00`, stats.in, stats.out, stats.total]);
   }
   const hourlyWs = XLSX.utils.aoa_to_sheet(hourlyData);

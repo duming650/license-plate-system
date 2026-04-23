@@ -55,11 +55,12 @@ export interface RecognizeResponse {
 export async function recognizeVehicle(
   imageData: string,
   direction: 'in' | 'out',
-  useMock?: boolean
+  useMock?: boolean,
+  useTensorflow?: boolean
 ): Promise<RecognizeResponse> {
   return request<RecognizeResponse>('/recognize', {
     method: 'POST',
-    body: JSON.stringify({ imageData, direction, useMock }),
+    body: JSON.stringify({ imageData, direction, useMock, useTensorflow }),
   });
 }
 
