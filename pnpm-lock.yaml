@@ -161,6 +161,9 @@ importers:
       recharts:
         specifier: 2.15.4
         version: 2.15.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      rtsp-web-player:
+        specifier: ^1.1.4
+        version: 1.1.4
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -5404,6 +5407,9 @@ packages:
   router@2.2.0:
     resolution: {integrity: sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==}
     engines: {node: '>= 18'}
+
+  rtsp-web-player@1.1.4:
+    resolution: {integrity: sha512-GGC2XgJwhtSoFiWuG/A+YfQ4zx0V0SjRxXFzx7SA8C/tRVUIo3TrehhzX+mQOA2VCrsDVCLT11BYxDIlj1xsJw==}
 
   run-applescript@7.1.0:
     resolution: {integrity: sha512-DPe5pVFaAsinSaV6QjQ6gdiedWDcRCbUuiQfQa2wmWV7+xC9bGulGI8+TdRmoFkAPaBXk8CrAbnlY2ISniJ47Q==}
@@ -11639,6 +11645,8 @@ snapshots:
       path-to-regexp: 8.3.0
     transitivePeerDependencies:
       - supports-color
+
+  rtsp-web-player@1.1.4: {}
 
   run-applescript@7.1.0: {}
 

@@ -2,10 +2,11 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { 
-  Car, Camera, Download, Users, FileText, Settings, 
+  Car, Camera, Download, Users, FileText, 
   AlertTriangle, XCircle, CheckCircle, Clock, Search,
-  Plus, Upload, Trash2, Edit2, Eye, RefreshCw, TrendingUp,
-  Video, VideoOff, Play, Pause, Camera as CameraIcon
+  Plus, Trash2, Eye, RefreshCw, TrendingUp,
+  Video, VideoOff, Play, Pause, Settings, 
+  Wifi, WifiOff, Monitor
 } from 'lucide-react';
 import { useApp, STATUS_COLORS, STATUS_NAMES, DIRECTION_NAMES, VEHICLE_TYPE_NAMES, VEHICLE_COLOR_NAMES } from '@/lib/context';
 import { 
@@ -16,7 +17,6 @@ import {
   deleteWhitelist,
   deleteRecord,
   exportRecords,
-  getStats,
   RecognizeResponse,
   WhitelistVehicle
 } from '@/lib/api';
@@ -32,6 +32,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import dynamic from 'next/dynamic';
+
+// 动态导入 RTSP 播放器（避免 SSR 问题）
+const RTSPPlayer = dynamic(() => import('./RTSPPlayer'), { ssr: false });
 
 // 车辆类型选项
 const VEHICLE_TYPES = [
@@ -55,117 +59,152 @@ const VEHICLE_COLORS = [
   { value: 'yellow', label: '黄色' },
 ];
 
-// 摄像头识别组件
-function CameraRecognizer() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+// 海康摄像头配置组件
+function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConfig) => void; currentConfig: CameraConfig }) {
+  const [config, setConfig] = useState<CameraConfig>(currentConfig);
   
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [isRecognizing, setIsRecognizing] = useState(false);
-  const [useMock, setUseMock] = useState(true);
-  const [direction, setDirection] = useState<'in' | 'out'>('in');
-  const [lastRecognizeTime, setLastRecognizeTime] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const handleSave = () => {
+    if (!config.rtspUrl) {
+      toast.error('请输入 RTSP 地址');
+      return;
+    }
+    onSave(config);
+    toast.success('摄像头配置已保存');
+  };
   
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>摄像头名称</Label>
+        <Input 
+          placeholder="如：入口摄像头"
+          value={config.name}
+          onChange={(e) => setConfig({...config, name: e.target.value})}
+        />
+      </div>
+      
+      <div className="space-y-2">
+        <Label>RTSP 地址</Label>
+        <Input 
+          placeholder="rtsp://admin:password@192.168.1.64/Streaming/Channels/101"
+          value={config.rtspUrl}
+          onChange={(e) => setConfig({...config, rtspUrl: e.target.value})}
+        />
+        <p className="text-xs text-gray-500">
+          海康摄像头格式：rtsp://用户名:密码@IP地址:554/Streaming/Channels/101
+        </p>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>IP地址</Label>
+          <Input 
+            placeholder="192.168.1.64"
+            value={config.ip}
+            onChange={(e) => setConfig({...config, ip: e.target.value})}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>端口</Label>
+          <Input 
+            placeholder="554"
+            value={config.port}
+            onChange={(e) => setConfig({...config, port: e.target.value})}
+          />
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>用户名</Label>
+          <Input 
+            placeholder="admin"
+            value={config.username}
+            onChange={(e) => setConfig({...config, username: e.target.value})}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>密码</Label>
+          <Input 
+            type="password"
+            placeholder="password"
+            value={config.password}
+            onChange={(e) => setConfig({...config, password: e.target.value})}
+          />
+        </div>
+      </div>
+      
+      <Button onClick={handleSave} className="w-full">
+        保存配置
+      </Button>
+      
+      <div className="p-3 bg-gray-50 rounded-lg">
+        <h4 className="font-medium text-sm mb-2">RTSP 地址格式说明</h4>
+        <div className="text-xs text-gray-600 space-y-1">
+          <p><strong>主码流：</strong>rtsp://用户:密码@IP:554/Streaming/Channels/101</p>
+          <p><strong>子码流：</strong>rtsp://用户:密码@IP:554/Streaming/Channels/102</p>
+          <p className="text-gray-400 mt-2">
+            Tip: 101 = 通道1主码流, 102 = 通道1子码流
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface CameraConfig {
+  name: string;
+  rtspUrl: string;
+  ip: string;
+  port: string;
+  username: string;
+  password: string;
+}
+
+// 海康摄像头识别组件
+function HikvisionCamera() {
   const { addRecentRecord, refreshStats } = useApp();
   
-  // 启动摄像头
-  const startCamera = useCallback(async () => {
-    try {
-      setError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'environment', // 后置摄像头优先
-        }
-      });
-      
-      streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      
-      setIsStreaming(true);
-      toast.success('摄像头已启动');
-    } catch (err: any) {
-      console.error('摄像头启动失败:', err);
-      if (err.name === 'NotAllowedError') {
-        setError('请允许访问摄像头权限');
-        toast.error('请允许访问摄像头权限');
-      } else if (err.name === 'NotFoundError') {
-        setError('未找到摄像头设备');
-        toast.error('未找到摄像头设备');
-      } else {
-        setError('摄像头启动失败');
-        toast.error('摄像头启动失败');
-      }
-    }
-  }, []);
+  const [config, setConfig] = useState<CameraConfig>({
+    name: '',
+    rtspUrl: '',
+    ip: '',
+    port: '554',
+    username: '',
+    password: '',
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  const [direction, setDirection] = useState<'in' | 'out'>('in');
+  const [useMock, setUseMock] = useState(true);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [lastRecognizeTime, setLastRecognizeTime] = useState(0);
+  const [autoInterval, setAutoInterval] = useState<number>(5); // 秒
+  const [isAutoRecognize, setIsAutoRecognize] = useState(false);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  // 停止摄像头
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+  // 生成 RTSP URL
+  const generateRTSPUrl = useCallback(() => {
+    if (config.rtspUrl) return config.rtspUrl;
+    if (config.ip && config.username && config.password) {
+      return `rtsp://${config.username}:${config.password}@${config.ip}:${config.port}/Streaming/Channels/101`;
     }
-    
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    
-    setIsStreaming(false);
-    toast.info('摄像头已关闭');
-  }, []);
+    return '';
+  }, [config]);
   
-  // 截取当前帧
-  const captureFrame = useCallback((): string | null => {
-    if (!videoRef.current || !canvasRef.current) return null;
-    
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    
-    // 设置画布尺寸与视频一致
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
-    // 绘制当前帧
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    
-    ctx.drawImage(video, 0, 0);
-    
-    // 转换为 base64
-    return canvas.toDataURL('image/jpeg', 0.8);
-  }, []);
-  
-  // 执行识别
-  const doRecognize = useCallback(async () => {
-    // 防止频繁识别（至少间隔3秒）
+  // 处理截图识别
+  const handleSnapshot = useCallback(async (imageData: string) => {
     const now = Date.now();
-    if (now - lastRecognizeTime < 3000) return;
+    if (now - lastRecognizeTime < 3000) return; // 3秒间隔
     if (isRecognizing) return;
-    
-    const frame = captureFrame();
-    if (!frame) return;
     
     setIsRecognizing(true);
     setLastRecognizeTime(now);
     
     try {
-      const result = await recognizeVehicle(frame, direction, useMock);
+      const result = await recognizeVehicle(imageData, direction, useMock);
       addRecentRecord(result);
       
-      // 根据结果显示不同提示
       if (result.status === 'internal') {
         toast.success(`内部车辆: ${result.plateNumber}`, { duration: 2000 });
       } else if (result.status === 'special') {
@@ -183,19 +222,16 @@ function CameraRecognizer() {
     } finally {
       setIsRecognizing(false);
     }
-  }, [captureFrame, direction, useMock, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
+  }, [direction, useMock, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
   
-  // 开始自动识别
+  // 自动识别
   const startAutoRecognize = useCallback(() => {
-    if (intervalRef.current) return;
-    
-    // 每5秒自动识别一次
-    intervalRef.current = setInterval(doRecognize, 5000);
-    toast.info('开始自动识别');
-  }, [doRecognize]);
+    setIsAutoRecognize(true);
+    toast.info(`开始自动识别，每 ${autoInterval} 秒检测一次`);
+  }, [autoInterval]);
   
-  // 停止自动识别
   const stopAutoRecognize = useCallback(() => {
+    setIsAutoRecognize(false);
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -203,97 +239,127 @@ function CameraRecognizer() {
     toast.info('停止自动识别');
   }, []);
   
-  // 清理
+  // 接收截图
+  const handleSnapshotCapture = useCallback((imageData: string) => {
+    handleSnapshot(imageData);
+  }, [handleSnapshot]);
+  
+  // 定时器
   useEffect(() => {
+    if (isAutoRecognize && isPlaying) {
+      intervalRef.current = setInterval(() => {
+        // 触发截图识别
+        const event = new CustomEvent('hkv:snapshot');
+        window.dispatchEvent(event);
+      }, autoInterval * 1000);
+    }
     return () => {
-      stopCamera();
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
     };
-  }, [stopCamera]);
+  }, [isAutoRecognize, isPlaying, autoInterval]);
+  
+  const rtspUrl = generateRTSPUrl();
+  const hasConfig = !!rtspUrl;
   
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Video className="w-5 h-5 text-green-600" />
-          实时摄像头识别
+          <Monitor className="w-5 h-5 text-blue-600" />
+          海康摄像头识别
         </CardTitle>
-        <CardDescription>打开摄像头，实时识别车辆车牌</CardDescription>
+        <CardDescription>
+          {hasConfig ? `已连接：${config.name || config.ip}` : '请先配置摄像头'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {/* 视频预览 */}
+          {/* 视频播放区域 */}
           <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-            <video
-              ref={videoRef}
-              className="w-full h-full object-contain"
-              playsInline
-              muted
-            />
-            
-            {/* 隐藏的画布用于截帧 */}
-            <canvas ref={canvasRef} className="hidden" />
+            {hasConfig ? (
+              <RTSPPlayer
+                url={rtspUrl}
+                onPlay={() => setIsPlaying(true)}
+                onStop={() => setIsPlaying(false)}
+                onSnapshot={handleSnapshotCapture}
+                isAutoRecognize={isAutoRecognize}
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                <VideoOff className="w-16 h-16 mb-4" />
+                <p>未配置摄像头</p>
+                <p className="text-sm">请点击右上角设置配置 RTSP 地址</p>
+              </div>
+            )}
             
             {/* 识别中遮罩 */}
             {isRecognizing && (
-              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10">
                 <div className="text-white text-center">
                   <RefreshCw className="w-8 h-8 mx-auto mb-2 animate-spin" />
                   <p>正在识别...</p>
                 </div>
               </div>
             )}
-            
-            {/* 未启动时的占位 */}
-            {!isStreaming && !error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-                <VideoOff className="w-16 h-16 mb-4" />
-                <p>点击下方按钮启动摄像头</p>
-              </div>
-            )}
-            
-            {/* 错误提示 */}
-            {error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400">
-                <XCircle className="w-16 h-16 mb-4" />
-                <p>{error}</p>
-              </div>
-            )}
           </div>
           
           {/* 控制按钮 */}
           <div className="flex items-center gap-2 flex-wrap">
-            {!isStreaming ? (
-              <Button onClick={startCamera} className="gap-2">
-                <Play className="w-4 h-4" />
-                启动摄像头
-              </Button>
-            ) : (
+            <Dialog open={showSettings} onOpenChange={setShowSettings}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2">
+                  <Settings className="w-4 h-4" />
+                  {hasConfig ? '修改配置' : '配置摄像头'}
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>海康摄像头配置</DialogTitle>
+                  <DialogDescription>
+                    输入海康摄像头的 RTSP 地址
+                  </DialogDescription>
+                </DialogHeader>
+                <CameraSettings 
+                  onSave={(c) => {
+                    setConfig(c);
+                    setShowSettings(false);
+                  }}
+                  currentConfig={config}
+                />
+              </DialogContent>
+            </Dialog>
+            
+            {hasConfig && (
               <>
-                <Button onClick={stopCamera} variant="destructive" className="gap-2">
-                  <VideoOff className="w-4 h-4" />
-                  关闭摄像头
-                </Button>
-                
-                <Button 
-                  onClick={doRecognize} 
-                  disabled={isRecognizing}
-                  className="gap-2"
-                >
-                  <CameraIcon className="w-4 h-4" />
-                  手动识别
-                </Button>
-                
-                {intervalRef.current ? (
-                  <Button onClick={stopAutoRecognize} variant="outline" className="gap-2">
+                {isAutoRecognize ? (
+                  <Button onClick={stopAutoRecognize} variant="destructive" className="gap-2">
                     <Pause className="w-4 h-4" />
                     停止自动
                   </Button>
                 ) : (
-                  <Button onClick={startAutoRecognize} variant="outline" className="gap-2">
-                    <RefreshCw className="w-4 h-4" />
+                  <Button onClick={startAutoRecognize} className="gap-2" disabled={!isPlaying}>
+                    <Play className="w-4 h-4" />
                     开始自动识别
                   </Button>
                 )}
+                
+                <div className="flex items-center gap-2 ml-auto">
+                  <Label className="text-sm">识别间隔：</Label>
+                  <Select value={String(autoInterval)} onValueChange={(v) => setAutoInterval(Number(v))}>
+                    <SelectTrigger className="w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="3">3秒</SelectItem>
+                      <SelectItem value="5">5秒</SelectItem>
+                      <SelectItem value="10">10秒</SelectItem>
+                      <SelectItem value="15">15秒</SelectItem>
+                      <SelectItem value="30">30秒</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </>
             )}
           </div>
@@ -316,20 +382,16 @@ function CameraRecognizer() {
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
-                id="useMockCamera"
+                id="useMockHikvision"
                 checked={useMock}
                 onChange={(e) => setUseMock(e.target.checked)}
                 className="rounded"
               />
-              <Label htmlFor="useMockCamera" className="text-sm">
-                模拟模式（测试用）
+              <Label htmlFor="useMockHikvision" className="text-sm">
+                模拟模式
               </Label>
             </div>
           </div>
-          
-          <p className="text-xs text-gray-500">
-            提示：自动识别每5秒检测一次，手动识别无间隔限制
-          </p>
         </div>
       </CardContent>
     </Card>
@@ -337,11 +399,10 @@ function CameraRecognizer() {
 }
 
 export default function Home() {
-  const { stats, whitelist, refreshStats, refreshWhitelist, addRecentRecord } = useApp();
+  const { stats, refreshStats, refreshWhitelist, addRecentRecord } = useApp();
   
   // 状态
   const [activeTab, setActiveTab] = useState('monitor');
-  const [isRecognizing, setIsRecognizing] = useState(false);
   const [useMock, setUseMock] = useState(true);
   
   // 记录列表状态
@@ -361,7 +422,7 @@ export default function Home() {
   const [whitelistPage, setWhitelistPage] = useState(1);
   const [whitelistLoading, setWhitelistLoading] = useState(false);
   
-  // 添加白名单弹窗
+  // 弹窗状态
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newVehicle, setNewVehicle] = useState({
     plateNumber: '',
@@ -373,13 +434,13 @@ export default function Home() {
     remark: '',
   });
   
-  // 预览图片
+  // 预览
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewRecord, setPreviewRecord] = useState<RecognizeResponse | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 加载记录列表
+  // 加载记录
   const loadRecords = useCallback(async (page: number = 1) => {
     setRecordsLoading(true);
     try {
@@ -393,7 +454,6 @@ export default function Home() {
       setRecordsTotal(result.total);
       setRecordsPage(page);
     } catch (error) {
-      console.error('加载记录失败:', error);
       toast.error('加载记录失败');
     } finally {
       setRecordsLoading(false);
@@ -409,14 +469,12 @@ export default function Home() {
       setWhitelistTotal(result.total);
       setWhitelistPage(page);
     } catch (error) {
-      console.error('加载白名单失败:', error);
       toast.error('加载白名单失败');
     } finally {
       setWhitelistLoading(false);
     }
   }, []);
 
-  // 初始化加载
   useEffect(() => {
     loadRecords();
     loadWhitelist();
@@ -437,34 +495,22 @@ export default function Home() {
       return;
     }
 
-    setIsRecognizing(true);
-    
     try {
       const reader = new FileReader();
       reader.onload = async (event) => {
         const base64 = event.target?.result as string;
-        
         try {
           const result = await recognizeVehicle(base64, dir, useMock);
           addRecentRecord(result);
           await loadRecords();
           toast.success(`识别成功：${result.plateNumber || '无牌照'}`);
         } catch (error: any) {
-          console.error('识别失败:', error);
           toast.error(error.message || '识别失败');
-        } finally {
-          setIsRecognizing(false);
         }
-      };
-      reader.onerror = () => {
-        toast.error('读取图片失败');
-        setIsRecognizing(false);
       };
       reader.readAsDataURL(file);
     } catch (error) {
-      console.error('处理图片失败:', error);
       toast.error('处理图片失败');
-      setIsRecognizing(false);
     }
 
     if (fileInputRef.current) {
@@ -483,15 +529,7 @@ export default function Home() {
       await addWhitelist(newVehicle);
       toast.success('添加成功');
       setAddDialogOpen(false);
-      setNewVehicle({
-        plateNumber: '',
-        vehicleType: 'sedan',
-        color: 'white',
-        brand: '',
-        owner: '',
-        department: '',
-        remark: '',
-      });
+      setNewVehicle({ plateNumber: '', vehicleType: 'sedan', color: 'white', brand: '', owner: '', department: '', remark: '' });
       loadWhitelist();
       refreshWhitelist();
     } catch (error: any) {
@@ -501,8 +539,7 @@ export default function Home() {
 
   // 删除白名单
   const handleDeleteWhitelist = async (id: string) => {
-    if (!confirm('确定要删除这条白名单吗？')) return;
-    
+    if (!confirm('确定要删除吗？')) return;
     try {
       await deleteWhitelist(id);
       toast.success('删除成功');
@@ -515,8 +552,7 @@ export default function Home() {
 
   // 删除记录
   const handleDeleteRecord = async (id: string) => {
-    if (!confirm('确定要删除这条记录吗？')) return;
-    
+    if (!confirm('确定要删除吗？')) return;
     try {
       await deleteRecord(id);
       toast.success('删除成功');
@@ -527,21 +563,14 @@ export default function Home() {
     }
   };
 
-  // 导出记录
+  // 导出
   const handleExport = () => {
     const query: any = {};
     if (queryDirection) query.direction = queryDirection;
     if (queryStatus) query.status = queryStatus;
     if (queryPlate) query.plateNumber = queryPlate;
-    
     exportRecords(query);
     toast.success('开始导出...');
-  };
-
-  // 预览记录
-  const handlePreview = (record: RecognizeResponse) => {
-    setPreviewRecord(record);
-    setPreviewImage(record.imageUrl);
   };
 
   return (
@@ -562,42 +591,10 @@ export default function Home() {
             
             {/* 统计数据 */}
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Clock className="w-4 h-4 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">今日通行</p>
-                  <p className="text-lg font-bold text-gray-900">{stats?.today || 0}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                  <CheckCircle className="w-4 h-4 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">内部车辆</p>
-                  <p className="text-lg font-bold text-gray-900">{stats?.internal || 0}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
-                  <AlertTriangle className="w-4 h-4 text-orange-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">特种车辆</p>
-                  <p className="text-lg font-bold text-gray-900">{stats?.special || 0}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-                  <XCircle className="w-4 h-4 text-gray-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">无牌照</p>
-                  <p className="text-lg font-bold text-gray-900">{stats?.unlicensed || 0}</p>
-                </div>
-              </div>
+              <StatCard icon={<Clock className="w-4 h-4 text-blue-600" />} label="今日通行" value={stats?.today || 0} />
+              <StatCard icon={<CheckCircle className="w-4 h-4 text-green-600" />} label="内部车辆" value={stats?.internal || 0} />
+              <StatCard icon={<AlertTriangle className="w-4 h-4 text-orange-600" />} label="特种车辆" value={stats?.special || 0} />
+              <StatCard icon={<XCircle className="w-4 h-4 text-gray-600" />} label="无牌照" value={stats?.unlicensed || 0} />
             </div>
           </div>
         </div>
@@ -624,57 +621,34 @@ export default function Home() {
           {/* 监控识别页 */}
           <TabsContent value="monitor">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* 摄像头识别 */}
-              <CameraRecognizer />
+              {/* 海康摄像头识别 */}
+              <HikvisionCamera />
 
               {/* 图片上传识别 */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Upload className="w-5 h-5 text-blue-600" />
+                    <TrendingUp className="w-5 h-5 text-green-600" />
                     图片上传识别
                   </CardTitle>
                   <CardDescription>上传车辆图片进行识别</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      ref={fileInputRef}
-                      onChange={(e) => handleImageUpload(e, 'in')}
-                    />
+                    <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={(e) => handleImageUpload(e, 'in')} />
                     
                     <div 
-                      className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
+                      className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-green-500 hover:bg-green-50 transition-colors cursor-pointer"
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      {isRecognizing ? (
-                        <div className="space-y-3">
-                          <RefreshCw className="w-12 h-12 mx-auto text-blue-600 animate-spin" />
-                          <p className="text-gray-600">正在识别...</p>
-                        </div>
-                      ) : (
-                        <>
-                          <Camera className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                          <p className="text-gray-600 mb-1">点击上传车辆图片</p>
-                          <p className="text-sm text-gray-400">支持 JPG、PNG 格式，最大 10MB</p>
-                        </>
-                      )}
+                      <Camera className="w-12 h-12 mx-auto text-gray-400 mb-3" />
+                      <p className="text-gray-600 mb-1">点击上传车辆图片</p>
+                      <p className="text-sm text-gray-400">支持 JPG、PNG 格式，最大 10MB</p>
                     </div>
                     
                     <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        id="useMockUpload"
-                        checked={useMock}
-                        onChange={(e) => setUseMock(e.target.checked)}
-                        className="rounded"
-                      />
-                      <Label htmlFor="useMockUpload" className="text-sm text-gray-600">
-                        使用模拟模式（测试用，无需配置 AI）
-                      </Label>
+                      <input type="checkbox" id="useMockUpload" checked={useMock} onChange={(e) => setUseMock(e.target.checked)} className="rounded" />
+                      <Label htmlFor="useMockUpload" className="text-sm text-gray-600">使用模拟模式</Label>
                     </div>
                   </div>
                 </CardContent>
@@ -682,31 +656,13 @@ export default function Home() {
 
               {/* 识别说明 */}
               <Card className="lg:col-span-2">
-                <CardHeader>
-                  <CardTitle>识别功能说明</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle>识别功能说明</CardTitle></CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="p-4 bg-green-50 rounded-lg">
-                      <CheckCircle className="w-8 h-8 text-green-600 mb-2" />
-                      <h4 className="font-medium text-gray-900 mb-1">内部车辆</h4>
-                      <p className="text-sm text-gray-600">白名单中的车辆，识别后标记为内部车辆</p>
-                    </div>
-                    <div className="p-4 bg-blue-50 rounded-lg">
-                      <Car className="w-8 h-8 text-blue-600 mb-2" />
-                      <h4 className="font-medium text-gray-900 mb-1">外部车辆</h4>
-                      <p className="text-sm text-gray-600">普通外部车辆，正常记录通行</p>
-                    </div>
-                    <div className="p-4 bg-orange-50 rounded-lg">
-                      <AlertTriangle className="w-8 h-8 text-orange-600 mb-2" />
-                      <h4 className="font-medium text-gray-900 mb-1">特种车辆</h4>
-                      <p className="text-sm text-gray-600">铲车、叉车、钩机等工程车辆</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <XCircle className="w-8 h-8 text-gray-600 mb-2" />
-                      <h4 className="font-medium text-gray-900 mb-1">无牌照</h4>
-                      <p className="text-sm text-gray-600">未能识别车牌的车辆</p>
-                    </div>
+                    <FeatureCard icon={<CheckCircle className="w-8 h-8 text-green-600" />} title="内部车辆" desc="白名单中的车辆" />
+                    <FeatureCard icon={<Car className="w-8 h-8 text-blue-600" />} title="外部车辆" desc="普通外部车辆" />
+                    <FeatureCard icon={<AlertTriangle className="w-8 h-8 text-orange-600" />} title="特种车辆" desc="铲车、叉车、钩机等" />
+                    <FeatureCard icon={<XCircle className="w-8 h-8 text-gray-600" />} title="无牌照" desc="未能识别车牌" />
                   </div>
                 </CardContent>
               </Card>
@@ -723,32 +679,17 @@ export default function Home() {
                     <CardDescription>共 {recordsTotal} 条记录</CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => loadRecords(1)}>
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      刷新
-                    </Button>
-                    <Button onClick={handleExport}>
-                      <Download className="w-4 h-4 mr-2" />
-                      导出 Excel
-                    </Button>
+                    <Button variant="outline" onClick={() => loadRecords(1)}><RefreshCw className="w-4 h-4 mr-2" />刷新</Button>
+                    <Button onClick={handleExport}><Download className="w-4 h-4 mr-2" />导出 Excel</Button>
                   </div>
                 </div>
-                
-                {/* 查询条件 */}
                 <div className="flex items-center gap-4 mt-4">
                   <div className="flex items-center gap-2">
                     <Search className="w-4 h-4 text-gray-400" />
-                    <Input 
-                      placeholder="搜索车牌号" 
-                      className="w-40"
-                      value={queryPlate}
-                      onChange={(e) => setQueryPlate(e.target.value)}
-                    />
+                    <Input placeholder="搜索车牌号" className="w-40" value={queryPlate} onChange={(e) => setQueryPlate(e.target.value)} />
                   </div>
                   <Select value={queryDirection} onValueChange={setQueryDirection}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue placeholder="通行方向" />
-                    </SelectTrigger>
+                    <SelectTrigger className="w-32"><SelectValue placeholder="通行方向" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">全部方向</SelectItem>
                       <SelectItem value="in">驶入</SelectItem>
@@ -756,9 +697,7 @@ export default function Home() {
                     </SelectContent>
                   </Select>
                   <Select value={queryStatus} onValueChange={setQueryStatus}>
-                    <SelectTrigger className="w-36">
-                      <SelectValue placeholder="车辆状态" />
-                    </SelectTrigger>
+                    <SelectTrigger className="w-36"><SelectValue placeholder="车辆状态" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">全部状态</SelectItem>
                       <SelectItem value="normal">外部车辆</SelectItem>
@@ -774,78 +713,43 @@ export default function Home() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-24">通行时间</TableHead>
-                      <TableHead className="w-28">车牌号</TableHead>
-                      <TableHead className="w-24">车辆类型</TableHead>
-                      <TableHead className="w-20">颜色</TableHead>
-                      <TableHead className="w-20">方向</TableHead>
-                      <TableHead className="w-24">状态</TableHead>
-                      <TableHead className="w-20">置信度</TableHead>
-                      <TableHead className="w-20">操作</TableHead>
+                      <TableHead>通行时间</TableHead>
+                      <TableHead>车牌号</TableHead>
+                      <TableHead>车辆类型</TableHead>
+                      <TableHead>颜色</TableHead>
+                      <TableHead>方向</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>置信度</TableHead>
+                      <TableHead>操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {recordsLoading ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <TableRow key={i}>
-                          <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                          <TableCell><Skeleton className="h-6 w-16" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                          {Array.from({ length: 8 }).map((_, j) => (
+                            <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
+                          ))}
                         </TableRow>
                       ))
                     ) : records.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center py-8 text-gray-500">
-                          暂无记录
-                        </TableCell>
-                      </TableRow>
+                      <TableRow><TableCell colSpan={8} className="text-center py-8 text-gray-500">暂无记录</TableCell></TableRow>
                     ) : (
                       records.map((record) => (
                         <TableRow key={record.id}>
-                          <TableCell className="text-sm">
-                            {new Date(record.createdAt).toLocaleString('zh-CN')}
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            {record.plateNumber}
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {VEHICLE_TYPE_NAMES[record.vehicleType] || record.vehicleType}
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {VEHICLE_COLOR_NAMES[record.color] || record.color}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={record.direction === 'in' ? 'default' : 'secondary'}>
-                              {DIRECTION_NAMES[record.direction]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={STATUS_COLORS[record.status]}>
-                              {STATUS_NAMES[record.status]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {record.confidence.toFixed(0)}%
-                          </TableCell>
+                          <TableCell className="text-sm">{new Date(record.createdAt).toLocaleString('zh-CN')}</TableCell>
+                          <TableCell className="font-medium">{record.plateNumber}</TableCell>
+                          <TableCell className="text-sm">{VEHICLE_TYPE_NAMES[record.vehicleType] || record.vehicleType}</TableCell>
+                          <TableCell className="text-sm">{VEHICLE_COLOR_NAMES[record.color] || record.color}</TableCell>
+                          <TableCell><Badge variant={record.direction === 'in' ? 'default' : 'secondary'}>{DIRECTION_NAMES[record.direction]}</Badge></TableCell>
+                          <TableCell><Badge className={STATUS_COLORS[record.status]}>{STATUS_NAMES[record.status]}</Badge></TableCell>
+                          <TableCell className="text-sm">{record.confidence.toFixed(0)}%</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => handlePreview(record)}
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => { setPreviewRecord(record); setPreviewImage(record.imageUrl); }}>
                                 <Eye className="w-4 h-4" />
                               </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => handleDeleteRecord(record.id)}
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => handleDeleteRecord(record.id)}>
                                 <Trash2 className="w-4 h-4 text-red-500" />
                               </Button>
                             </div>
@@ -855,30 +759,12 @@ export default function Home() {
                     )}
                   </TableBody>
                 </Table>
-                
-                {/* 分页 */}
                 {recordsTotal > 15 && (
                   <div className="flex items-center justify-between mt-4">
-                    <p className="text-sm text-gray-500">
-                      第 {recordsPage} 页，共 {Math.ceil(recordsTotal / 15)} 页
-                    </p>
+                    <p className="text-sm text-gray-500">第 {recordsPage} 页，共 {Math.ceil(recordsTotal / 15)} 页</p>
                     <div className="flex items-center gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        disabled={recordsPage <= 1}
-                        onClick={() => loadRecords(recordsPage - 1)}
-                      >
-                        上一页
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        disabled={recordsPage >= Math.ceil(recordsTotal / 15)}
-                        onClick={() => loadRecords(recordsPage + 1)}
-                      >
-                        下一页
-                      </Button>
+                      <Button variant="outline" size="sm" disabled={recordsPage <= 1} onClick={() => loadRecords(recordsPage - 1)}>上一页</Button>
+                      <Button variant="outline" size="sm" disabled={recordsPage >= Math.ceil(recordsTotal / 15)} onClick={() => loadRecords(recordsPage + 1)}>下一页</Button>
                     </div>
                   </div>
                 )}
@@ -897,108 +783,56 @@ export default function Home() {
                   </div>
                   <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
                     <DialogTrigger asChild>
-                      <Button>
-                        <Plus className="w-4 h-4 mr-2" />
-                        添加车辆
-                      </Button>
+                      <Button><Plus className="w-4 h-4 mr-2" />添加车辆</Button>
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-md">
                       <DialogHeader>
                         <DialogTitle>添加内部车辆</DialogTitle>
-                        <DialogDescription>
-                          录入内部车辆信息，识别时自动标记
-                        </DialogDescription>
+                        <DialogDescription>录入内部车辆信息，识别时自动标记</DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div className="space-y-2">
-                          <Label htmlFor="plateNumber">车牌号 *</Label>
-                          <Input
-                            id="plateNumber"
-                            placeholder="如：京A12345"
-                            value={newVehicle.plateNumber}
-                            onChange={(e) => setNewVehicle({...newVehicle, plateNumber: e.target.value.toUpperCase()})}
-                          />
+                          <Label>车牌号 *</Label>
+                          <Input placeholder="如：京A12345" value={newVehicle.plateNumber} onChange={(e) => setNewVehicle({...newVehicle, plateNumber: e.target.value.toUpperCase()})} />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="vehicleType">车辆类型 *</Label>
-                          <Select 
-                            value={newVehicle.vehicleType} 
-                            onValueChange={(v) => setNewVehicle({...newVehicle, vehicleType: v})}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
+                          <Label>车辆类型 *</Label>
+                          <Select value={newVehicle.vehicleType} onValueChange={(v) => setNewVehicle({...newVehicle, vehicleType: v})}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              {VEHICLE_TYPES.map((type) => (
-                                <SelectItem key={type.value} value={type.value}>
-                                  {type.label}
-                                </SelectItem>
-                              ))}
+                              {VEHICLE_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="color">车辆颜色</Label>
-                          <Select 
-                            value={newVehicle.color} 
-                            onValueChange={(v) => setNewVehicle({...newVehicle, color: v})}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
+                          <Label>车辆颜色</Label>
+                          <Select value={newVehicle.color} onValueChange={(v) => setNewVehicle({...newVehicle, color: v})}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              {VEHICLE_COLORS.map((color) => (
-                                <SelectItem key={color.value} value={color.value}>
-                                  {color.label}
-                                </SelectItem>
-                              ))}
+                              {VEHICLE_COLORS.map((color) => <SelectItem key={color.value} value={color.value}>{color.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="brand">品牌型号</Label>
-                          <Input
-                            id="brand"
-                            placeholder="如：丰田卡罗拉"
-                            value={newVehicle.brand}
-                            onChange={(e) => setNewVehicle({...newVehicle, brand: e.target.value})}
-                          />
+                          <Label>品牌型号</Label>
+                          <Input placeholder="如：丰田卡罗拉" value={newVehicle.brand} onChange={(e) => setNewVehicle({...newVehicle, brand: e.target.value})} />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="owner">车主/负责人</Label>
-                          <Input
-                            id="owner"
-                            placeholder="请输入"
-                            value={newVehicle.owner}
-                            onChange={(e) => setNewVehicle({...newVehicle, owner: e.target.value})}
-                          />
+                          <Label>车主/负责人</Label>
+                          <Input placeholder="请输入" value={newVehicle.owner} onChange={(e) => setNewVehicle({...newVehicle, owner: e.target.value})} />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="department">部门</Label>
-                          <Input
-                            id="department"
-                            placeholder="请输入"
-                            value={newVehicle.department}
-                            onChange={(e) => setNewVehicle({...newVehicle, department: e.target.value})}
-                          />
+                          <Label>部门</Label>
+                          <Input placeholder="请输入" value={newVehicle.department} onChange={(e) => setNewVehicle({...newVehicle, department: e.target.value})} />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="remark">备注</Label>
-                          <Textarea
-                            id="remark"
-                            placeholder="其他备注信息"
-                            value={newVehicle.remark}
-                            onChange={(e) => setNewVehicle({...newVehicle, remark: e.target.value})}
-                          />
+                          <Label>备注</Label>
+                          <Textarea placeholder="其他备注信息" value={newVehicle.remark} onChange={(e) => setNewVehicle({...newVehicle, remark: e.target.value})} />
                         </div>
                       </div>
                       <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-                          取消
-                        </Button>
-                        <Button onClick={handleAddWhitelist}>
-                          添加
-                        </Button>
+                        <Button variant="outline" onClick={() => setAddDialogOpen(false)}>取消</Button>
+                        <Button onClick={handleAddWhitelist}>添加</Button>
                       </div>
                     </DialogContent>
                   </Dialog>
@@ -1014,28 +848,20 @@ export default function Home() {
                       <TableHead>品牌型号</TableHead>
                       <TableHead>车主/负责人</TableHead>
                       <TableHead>部门</TableHead>
-                      <TableHead className="w-20">操作</TableHead>
+                      <TableHead>操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {whitelistLoading ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <TableRow key={i}>
-                          <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                          {Array.from({ length: 7 }).map((_, j) => (
+                            <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
+                          ))}
                         </TableRow>
                       ))
                     ) : whitelistData.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                          暂无白名单车辆，点击上方按钮添加
-                        </TableCell>
-                      </TableRow>
+                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-gray-500">暂无白名单车辆</TableCell></TableRow>
                     ) : (
                       whitelistData.map((vehicle) => (
                         <TableRow key={vehicle.id}>
@@ -1046,11 +872,7 @@ export default function Home() {
                           <TableCell className="text-sm">{vehicle.owner || '-'}</TableCell>
                           <TableCell className="text-sm">{vehicle.department || '-'}</TableCell>
                           <TableCell>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => handleDeleteWhitelist(vehicle.id)}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => handleDeleteWhitelist(vehicle.id)}>
                               <Trash2 className="w-4 h-4 text-red-500" />
                             </Button>
                           </TableCell>
@@ -1059,98 +881,58 @@ export default function Home() {
                     )}
                   </TableBody>
                 </Table>
-                
-                {/* 分页 */}
-                {whitelistTotal > 15 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <p className="text-sm text-gray-500">
-                      第 {whitelistPage} 页，共 {Math.ceil(whitelistTotal / 15)} 页
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        disabled={whitelistPage <= 1}
-                        onClick={() => loadWhitelist(whitelistPage - 1)}
-                      >
-                        上一页
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        disabled={whitelistPage >= Math.ceil(whitelistTotal / 15)}
-                        onClick={() => loadWhitelist(whitelistPage + 1)}
-                      >
-                        下一页
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
       </main>
 
-      {/* 图片预览弹窗 */}
+      {/* 预览弹窗 */}
       <Dialog open={!!previewImage} onOpenChange={() => { setPreviewImage(null); setPreviewRecord(null); }}>
         <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>通行记录详情</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>通行记录详情</DialogTitle></DialogHeader>
           {previewRecord && (
             <div className="space-y-4">
               <div className="relative aspect-video bg-gray-100 rounded-lg overflow-hidden">
-                <img 
-                  src={previewImage || ''} 
-                  alt="通行图片" 
-                  className="w-full h-full object-contain"
-                />
+                <img src={previewImage || ''} alt="通行图片" className="w-full h-full object-contain" />
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">车牌号：</span>
-                  <span className="font-medium">{previewRecord.plateNumber}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">通行时间：</span>
-                  <span>{new Date(previewRecord.createdAt).toLocaleString('zh-CN')}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">车辆类型：</span>
-                  <span>{VEHICLE_TYPE_NAMES[previewRecord.vehicleType] || previewRecord.vehicleType}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">车辆颜色：</span>
-                  <span>{VEHICLE_COLOR_NAMES[previewRecord.color] || previewRecord.color}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">通行方向：</span>
-                  <Badge variant={previewRecord.direction === 'in' ? 'default' : 'secondary'}>
-                    {DIRECTION_NAMES[previewRecord.direction]}
-                  </Badge>
-                </div>
-                <div>
-                  <span className="text-gray-500">车辆状态：</span>
-                  <Badge className={STATUS_COLORS[previewRecord.status]}>
-                    {STATUS_NAMES[previewRecord.status]}
-                  </Badge>
-                </div>
-                <div>
-                  <span className="text-gray-500">识别置信度：</span>
-                  <span>{previewRecord.confidence.toFixed(1)}%</span>
-                </div>
-                {previewRecord.remark && (
-                  <div className="col-span-2">
-                    <span className="text-gray-500">备注：</span>
-                    <span>{previewRecord.remark}</span>
-                  </div>
-                )}
+                <div><span className="text-gray-500">车牌号：</span><span className="font-medium">{previewRecord.plateNumber}</span></div>
+                <div><span className="text-gray-500">通行时间：</span><span>{new Date(previewRecord.createdAt).toLocaleString('zh-CN')}</span></div>
+                <div><span className="text-gray-500">车辆类型：</span><span>{VEHICLE_TYPE_NAMES[previewRecord.vehicleType] || previewRecord.vehicleType}</span></div>
+                <div><span className="text-gray-500">车辆颜色：</span><span>{VEHICLE_COLOR_NAMES[previewRecord.color] || previewRecord.color}</span></div>
+                <div><span className="text-gray-500">通行方向：</span><Badge variant={previewRecord.direction === 'in' ? 'default' : 'secondary'}>{DIRECTION_NAMES[previewRecord.direction]}</Badge></div>
+                <div><span className="text-gray-500">车辆状态：</span><Badge className={STATUS_COLORS[previewRecord.status]}>{STATUS_NAMES[previewRecord.status]}</Badge></div>
+                <div><span className="text-gray-500">识别置信度：</span><span>{previewRecord.confidence.toFixed(1)}%</span></div>
+                {previewRecord.remark && <div className="col-span-2"><span className="text-gray-500">备注：</span><span>{previewRecord.remark}</span></div>}
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// 辅助组件
+function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">{icon}</div>
+      <div>
+        <p className="text-xs text-gray-500">{label}</p>
+        <p className="text-lg font-bold text-gray-900">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function FeatureCard({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
+  return (
+    <div className={`p-4 rounded-lg`}>
+      <div className="mb-2">{icon}</div>
+      <h4 className="font-medium text-gray-900 mb-1">{title}</h4>
+      <p className="text-sm text-gray-600">{desc}</p>
     </div>
   );
 }
