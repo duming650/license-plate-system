@@ -693,6 +693,52 @@ function NetworkCamera() {
     setLastRecognizeTime(now);
     
     try {
+      // 本地AI识别模式 - 在浏览器中使用 TensorFlow.js
+      if (useTensorflow && !useMock) {
+        toast.info('正在使用本地AI检测...');
+        
+        // 动态导入 TensorFlow.js
+        const { tfRecognize } = await import('@/lib/tfDetection');
+        
+        // 创建一个图片元素用于检测
+        const img = new Image();
+        img.src = imageData;
+        await new Promise((resolve) => { img.onload = resolve; });
+        
+        // 在浏览器中进行车辆检测
+        const tfResult = await tfRecognize(img);
+        
+        if (!tfResult.hasVehicle) {
+          if (tfResult.hasPerson) {
+            toast.error('检测到人而非车辆，不记录', { duration: 2000 });
+          } else {
+            toast.error('未检测到车辆', { duration: 2000 });
+          }
+          setIsRecognizing(false);
+          return;
+        }
+        
+        // 检测到车辆，调用 API 保存记录
+        const result = await recognizeVehicle(imageData, direction, false, true);
+        
+        addRecentRecord(result);
+        
+        if (result.status === 'internal') {
+          toast.success(`内部车辆: ${result.plateNumber}`, { duration: 2000 });
+        } else if (result.status === 'special') {
+          toast.warning(`特种车辆: ${result.plateNumber || '无牌照'} - ${result.remark || ''}`, { duration: 3000 });
+        } else if (result.status === 'unlicensed') {
+          toast.error(`无牌照车辆`, { duration: 3000 });
+        } else {
+          toast.success(`外部车辆: ${result.plateNumber}`, { duration: 2000 });
+        }
+        
+        refreshStats();
+        setIsRecognizing(false);
+        return;
+      }
+      
+      // 模拟模式或API模式 - 直接调用 API
       const result = await recognizeVehicle(imageData, direction, useMock, useTensorflow);
       
       // 检查是否识别到车辆
@@ -721,7 +767,7 @@ function NetworkCamera() {
     } finally {
       setIsRecognizing(false);
     }
-  }, [direction, useMock, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
+  }, [direction, useMock, useTensorflow, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
   
   // 自动识别
   const startAutoRecognize = useCallback(() => {
@@ -1018,6 +1064,39 @@ export default function Home() {
       reader.onload = async (event) => {
         const base64 = event.target?.result as string;
         try {
+          // 本地AI识别模式 - 在浏览器中使用 TensorFlow.js
+          if (useTensorflow && !useMock) {
+            toast.info('正在使用本地AI检测...');
+            
+            // 动态导入 TensorFlow.js
+            const { tfRecognize } = await import('@/lib/tfDetection');
+            
+            // 创建一个图片元素用于检测
+            const img = new Image();
+            img.src = base64;
+            await new Promise((resolve) => { img.onload = resolve; });
+            
+            // 在浏览器中进行车辆检测
+            const tfResult = await tfRecognize(img);
+            
+            if (!tfResult.hasVehicle) {
+              if (tfResult.hasPerson) {
+                toast.error('检测到人而非车辆，不记录');
+              } else {
+                toast.error('未检测到车辆');
+              }
+              return;
+            }
+            
+            // 检测到车辆，调用 API 保存记录
+            const apiResult = await recognizeVehicle(base64, dir, false, true);
+            addRecentRecord(apiResult);
+            await loadRecords();
+            toast.success(`识别成功：${apiResult.plateNumber || '无牌照'} (${tfResult.result.vehicleType})`);
+            return;
+          }
+          
+          // 模拟模式或API模式 - 直接调用 API
           const result = await recognizeVehicle(base64, dir, useMock, useTensorflow);
           addRecentRecord(result);
           await loadRecords();

@@ -78,7 +78,7 @@ function generateMockResult(): {
   };
 }
 
-// 主识别函数（支持 LLM 和 TensorFlow.js 模式）
+// 主识别函数（支持 LLM 和模拟模式）
 export async function recognizeVehicle(
   imageBase64: string,
   direction: 'in' | 'out',
@@ -92,23 +92,16 @@ export async function recognizeVehicle(
   // 先保存图片
   const imageUrl = saveBase64Image(imageBase64, `vehicle_${direction}`);
   
-  // TensorFlow.js 模式 - 本地AI检测车辆
+  // TensorFlow.js 模式（在浏览器执行），后端只需保存记录
   if (useTensorflow) {
-    console.log('[识别] 使用 TensorFlow.js 本地AI模式');
-    const tfResult = await tensorflowRecognizeVehicle(imageBase64, direction);
-    
-    if (!tfResult.hasVehicle) {
-      throw new Error(tfResult.hasPerson ? '检测到人而非车辆，不记录' : '未检测到车辆');
-    }
-    
-    // 根据 isSpecial 判断 status
-    const status: 'normal' | 'internal' | 'special' | 'unlicensed' = 
-      tfResult.result.isSpecial ? 'special' : 'normal';
-    
-    // 返回 TensorFlow 检测结果
+    console.log('[识别] TensorFlow.js 检测已完成，后端保存记录');
     return {
-      ...tfResult.result,
-      status,
+      plateNumber: '待识别',
+      vehicleType: 'unknown',
+      color: 'other' as VehicleColor,
+      confidence: 50,
+      isSpecial: false,
+      status: 'normal',
       imageUrl,
       recordId: generateId(),
     };
@@ -261,87 +254,6 @@ export function mockRecognizeVehicle(
     recordId: `record_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     hasVehicle: mockResult.hasVehicle,
   };
-}
-
-// 使用 TensorFlow.js 进行真实车辆检测
-export async function tensorflowRecognizeVehicle(
-  imageBase64: string,
-  direction: 'in' | 'out'
-): Promise<{
-  hasVehicle: boolean;
-  hasPerson: boolean;
-  result: {
-    plateNumber: string | null;
-    vehicleType: VehicleType;
-    color: VehicleColor;
-    confidence: number;
-    confidencePlate?: number;
-    confidenceType?: number;
-    confidenceColor?: number;
-    isSpecial: boolean;
-    specialType?: string;
-  };
-}> {
-  // 动态导入以避免 SSR 问题
-  const { detectVehicles, mapCocoTypeToVehicle } = await import('./tfDetection');
-  
-  try {
-    // 检测车辆
-    const detection = await detectVehicles(imageBase64);
-    
-    // 没有车辆
-    if (!detection.hasVehicle) {
-      return {
-        hasVehicle: false,
-        hasPerson: detection.hasPerson,
-        result: {
-          plateNumber: null,
-          vehicleType: 'unknown',
-          color: 'other',
-          confidence: 0,
-          isSpecial: false,
-        },
-      };
-    }
-    
-    // 识别到的第一辆车（主要车辆）
-    const mainVehicle = detection.vehicles[0];
-    
-    // 生成车牌
-    const plate = generatePlateNumber();
-    
-    // 判断是否为特种车辆（货车、卡车）
-    const isSpecial = ['truck'].includes(mainVehicle.type.toLowerCase());
-    
-    return {
-      hasVehicle: true,
-      hasPerson: detection.hasPerson,
-      result: {
-        plateNumber: plate,
-        vehicleType: mapCocoTypeToVehicle(mainVehicle.type),
-        color: 'white', // 默认白色
-        confidence: mainVehicle.score * 100,
-        confidencePlate: 70 + Math.random() * 20,
-        confidenceType: mainVehicle.score * 100,
-        confidenceColor: 60 + Math.random() * 20,
-        isSpecial,
-        specialType: isSpecial ? '货车' : undefined,
-      },
-    };
-  } catch (error) {
-    console.error('TensorFlow.js 识别失败:', error);
-    return {
-      hasVehicle: false,
-      hasPerson: false,
-      result: {
-        plateNumber: null,
-        vehicleType: 'unknown',
-        color: 'other',
-        confidence: 0,
-        isSpecial: false,
-      },
-    };
-  }
 }
 
 // 生成车牌号
