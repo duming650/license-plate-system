@@ -844,8 +844,11 @@ function NetworkCamera() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="1">1秒</SelectItem>
+                      <SelectItem value="2">2秒</SelectItem>
                       <SelectItem value="3">3秒</SelectItem>
                       <SelectItem value="5">5秒</SelectItem>
+                      <SelectItem value="10">10秒</SelectItem>
                       <SelectItem value="10">10秒</SelectItem>
                       <SelectItem value="15">15秒</SelectItem>
                       <SelectItem value="30">30秒</SelectItem>
