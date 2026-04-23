@@ -4,7 +4,8 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { 
   Car, Camera, Download, Users, FileText, Settings, 
   AlertTriangle, XCircle, CheckCircle, Clock, Search,
-  Plus, Upload, Trash2, Edit2, Eye, RefreshCw, TrendingUp
+  Plus, Upload, Trash2, Edit2, Eye, RefreshCw, TrendingUp,
+  Video, VideoOff, Play, Pause, Camera as CameraIcon
 } from 'lucide-react';
 import { useApp, STATUS_COLORS, STATUS_NAMES, DIRECTION_NAMES, VEHICLE_TYPE_NAMES, VEHICLE_COLOR_NAMES } from '@/lib/context';
 import { 
@@ -52,9 +53,288 @@ const VEHICLE_COLORS = [
   { value: 'blue', label: '蓝色' },
   { value: 'green', label: '绿色' },
   { value: 'yellow', label: '黄色' },
-  { value: 'orange', label: '橙色' },
-  { value: 'brown', label: '棕色' },
 ];
+
+// 摄像头识别组件
+function CameraRecognizer() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [useMock, setUseMock] = useState(true);
+  const [direction, setDirection] = useState<'in' | 'out'>('in');
+  const [lastRecognizeTime, setLastRecognizeTime] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  
+  const { addRecentRecord, refreshStats } = useApp();
+  
+  // 启动摄像头
+  const startCamera = useCallback(async () => {
+    try {
+      setError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'environment', // 后置摄像头优先
+        }
+      });
+      
+      streamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      
+      setIsStreaming(true);
+      toast.success('摄像头已启动');
+    } catch (err: any) {
+      console.error('摄像头启动失败:', err);
+      if (err.name === 'NotAllowedError') {
+        setError('请允许访问摄像头权限');
+        toast.error('请允许访问摄像头权限');
+      } else if (err.name === 'NotFoundError') {
+        setError('未找到摄像头设备');
+        toast.error('未找到摄像头设备');
+      } else {
+        setError('摄像头启动失败');
+        toast.error('摄像头启动失败');
+      }
+    }
+  }, []);
+  
+  // 停止摄像头
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    setIsStreaming(false);
+    toast.info('摄像头已关闭');
+  }, []);
+  
+  // 截取当前帧
+  const captureFrame = useCallback((): string | null => {
+    if (!videoRef.current || !canvasRef.current) return null;
+    
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // 设置画布尺寸与视频一致
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // 绘制当前帧
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    
+    ctx.drawImage(video, 0, 0);
+    
+    // 转换为 base64
+    return canvas.toDataURL('image/jpeg', 0.8);
+  }, []);
+  
+  // 执行识别
+  const doRecognize = useCallback(async () => {
+    // 防止频繁识别（至少间隔3秒）
+    const now = Date.now();
+    if (now - lastRecognizeTime < 3000) return;
+    if (isRecognizing) return;
+    
+    const frame = captureFrame();
+    if (!frame) return;
+    
+    setIsRecognizing(true);
+    setLastRecognizeTime(now);
+    
+    try {
+      const result = await recognizeVehicle(frame, direction, useMock);
+      addRecentRecord(result);
+      
+      // 根据结果显示不同提示
+      if (result.status === 'internal') {
+        toast.success(`内部车辆: ${result.plateNumber}`, { duration: 2000 });
+      } else if (result.status === 'special') {
+        toast.warning(`特种车辆: ${result.plateNumber || '无牌照'} - ${result.remark || ''}`, { duration: 3000 });
+      } else if (result.status === 'unlicensed') {
+        toast.error(`无牌照车辆`, { duration: 3000 });
+      } else {
+        toast(`外部车辆: ${result.plateNumber}`, { duration: 2000 });
+      }
+      
+      refreshStats();
+    } catch (err: any) {
+      console.error('识别失败:', err);
+      toast.error('识别失败');
+    } finally {
+      setIsRecognizing(false);
+    }
+  }, [captureFrame, direction, useMock, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
+  
+  // 开始自动识别
+  const startAutoRecognize = useCallback(() => {
+    if (intervalRef.current) return;
+    
+    // 每5秒自动识别一次
+    intervalRef.current = setInterval(doRecognize, 5000);
+    toast.info('开始自动识别');
+  }, [doRecognize]);
+  
+  // 停止自动识别
+  const stopAutoRecognize = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    toast.info('停止自动识别');
+  }, []);
+  
+  // 清理
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
+  
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Video className="w-5 h-5 text-green-600" />
+          实时摄像头识别
+        </CardTitle>
+        <CardDescription>打开摄像头，实时识别车辆车牌</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          {/* 视频预览 */}
+          <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+            <video
+              ref={videoRef}
+              className="w-full h-full object-contain"
+              playsInline
+              muted
+            />
+            
+            {/* 隐藏的画布用于截帧 */}
+            <canvas ref={canvasRef} className="hidden" />
+            
+            {/* 识别中遮罩 */}
+            {isRecognizing && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                <div className="text-white text-center">
+                  <RefreshCw className="w-8 h-8 mx-auto mb-2 animate-spin" />
+                  <p>正在识别...</p>
+                </div>
+              </div>
+            )}
+            
+            {/* 未启动时的占位 */}
+            {!isStreaming && !error && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                <VideoOff className="w-16 h-16 mb-4" />
+                <p>点击下方按钮启动摄像头</p>
+              </div>
+            )}
+            
+            {/* 错误提示 */}
+            {error && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400">
+                <XCircle className="w-16 h-16 mb-4" />
+                <p>{error}</p>
+              </div>
+            )}
+          </div>
+          
+          {/* 控制按钮 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {!isStreaming ? (
+              <Button onClick={startCamera} className="gap-2">
+                <Play className="w-4 h-4" />
+                启动摄像头
+              </Button>
+            ) : (
+              <>
+                <Button onClick={stopCamera} variant="destructive" className="gap-2">
+                  <VideoOff className="w-4 h-4" />
+                  关闭摄像头
+                </Button>
+                
+                <Button 
+                  onClick={doRecognize} 
+                  disabled={isRecognizing}
+                  className="gap-2"
+                >
+                  <CameraIcon className="w-4 h-4" />
+                  手动识别
+                </Button>
+                
+                {intervalRef.current ? (
+                  <Button onClick={stopAutoRecognize} variant="outline" className="gap-2">
+                    <Pause className="w-4 h-4" />
+                    停止自动
+                  </Button>
+                ) : (
+                  <Button onClick={startAutoRecognize} variant="outline" className="gap-2">
+                    <RefreshCw className="w-4 h-4" />
+                    开始自动识别
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+          
+          {/* 设置选项 */}
+          <div className="flex items-center gap-4 pt-4 border-t">
+            <div className="flex items-center gap-2">
+              <Label>通行方向：</Label>
+              <Select value={direction} onValueChange={(v) => setDirection(v as 'in' | 'out')}>
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="in">驶入</SelectItem>
+                  <SelectItem value="out">驶出</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="useMockCamera"
+                checked={useMock}
+                onChange={(e) => setUseMock(e.target.checked)}
+                className="rounded"
+              />
+              <Label htmlFor="useMockCamera" className="text-sm">
+                模拟模式（测试用）
+              </Label>
+            </div>
+          </div>
+          
+          <p className="text-xs text-gray-500">
+            提示：自动识别每5秒检测一次，手动识别无间隔限制
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Home() {
   const { stats, whitelist, refreshStats, refreshWhitelist, addRecentRecord } = useApp();
@@ -62,7 +342,7 @@ export default function Home() {
   // 状态
   const [activeTab, setActiveTab] = useState('monitor');
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [useMock, setUseMock] = useState(true); // 默认使用模拟模式
+  const [useMock, setUseMock] = useState(true);
   
   // 记录列表状态
   const [records, setRecords] = useState<RecognizeResponse[]>([]);
@@ -143,17 +423,15 @@ export default function Home() {
   }, [loadRecords, loadWhitelist]);
 
   // 处理图片上传
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, direction: 'in' | 'out') => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, dir: 'in' | 'out') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 验证文件类型
     if (!file.type.startsWith('image/')) {
       toast.error('请上传图片文件');
       return;
     }
 
-    // 验证文件大小 (最大 10MB)
     if (file.size > 10 * 1024 * 1024) {
       toast.error('图片大小不能超过 10MB');
       return;
@@ -162,13 +440,12 @@ export default function Home() {
     setIsRecognizing(true);
     
     try {
-      // 转换为 base64
       const reader = new FileReader();
       reader.onload = async (event) => {
         const base64 = event.target?.result as string;
         
         try {
-          const result = await recognizeVehicle(base64, direction, useMock);
+          const result = await recognizeVehicle(base64, dir, useMock);
           addRecentRecord(result);
           await loadRecords();
           toast.success(`识别成功：${result.plateNumber || '无牌照'}`);
@@ -190,7 +467,6 @@ export default function Home() {
       setIsRecognizing(false);
     }
 
-    // 清空 input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -348,14 +624,17 @@ export default function Home() {
           {/* 监控识别页 */}
           <TabsContent value="monitor">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* 驶入识别 */}
+              {/* 摄像头识别 */}
+              <CameraRecognizer />
+
+              {/* 图片上传识别 */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-green-600" />
-                    车辆驶入识别
+                    <Upload className="w-5 h-5 text-blue-600" />
+                    图片上传识别
                   </CardTitle>
-                  <CardDescription>上传车辆图片进行驶入识别</CardDescription>
+                  <CardDescription>上传车辆图片进行识别</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
@@ -368,12 +647,12 @@ export default function Home() {
                     />
                     
                     <div 
-                      className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-green-500 hover:bg-green-50 transition-colors cursor-pointer"
+                      className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
                       onClick={() => fileInputRef.current?.click()}
                     >
                       {isRecognizing ? (
                         <div className="space-y-3">
-                          <RefreshCw className="w-12 h-12 mx-auto text-green-600 animate-spin" />
+                          <RefreshCw className="w-12 h-12 mx-auto text-blue-600 animate-spin" />
                           <p className="text-gray-600">正在识别...</p>
                         </div>
                       ) : (
@@ -388,54 +667,14 @@ export default function Home() {
                     <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        id="useMock"
+                        id="useMockUpload"
                         checked={useMock}
                         onChange={(e) => setUseMock(e.target.checked)}
                         className="rounded"
                       />
-                      <Label htmlFor="useMock" className="text-sm text-gray-600">
+                      <Label htmlFor="useMockUpload" className="text-sm text-gray-600">
                         使用模拟模式（测试用，无需配置 AI）
                       </Label>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* 驶出识别 */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-red-600 rotate-180" />
-                    车辆驶出识别
-                  </CardTitle>
-                  <CardDescription>上传车辆图片进行驶出识别</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      id="upload-out"
-                      onChange={(e) => handleImageUpload(e, 'out')}
-                    />
-                    
-                    <div 
-                      className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-red-500 hover:bg-red-50 transition-colors cursor-pointer"
-                      onClick={() => document.getElementById('upload-out')?.click()}
-                    >
-                      {isRecognizing ? (
-                        <div className="space-y-3">
-                          <RefreshCw className="w-12 h-12 mx-auto text-red-600 animate-spin" />
-                          <p className="text-gray-600">正在识别...</p>
-                        </div>
-                      ) : (
-                        <>
-                          <Camera className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                          <p className="text-gray-600 mb-1">点击上传车辆图片</p>
-                          <p className="text-sm text-gray-400">支持 JPG、PNG 格式，最大 10MB</p>
-                        </>
-                      )}
                     </div>
                   </div>
                 </CardContent>
