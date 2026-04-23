@@ -493,7 +493,7 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
       case 'tiandy':
         return 'rtsp://用户名:密码@IP:554/Stream%201';
       case 'hanbang':
-        return 'rtsp://用户名:密码@IP:554/Stream%201';
+        return 'rtsp://用户名:密码@IP:554/stream1';
       case 'huawei':
         return 'rtsp://用户名:密码@IP:554/Live/Channels/101';
       default:
@@ -587,7 +587,7 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
           <p><strong>大华：</strong>rtsp://用户:密码@IP:554/cam/realplay?chn=1</p>
           <p><strong>宇视：</strong>rtsp://用户:密码@IP:554/media/video1</p>
           <p><strong>天地伟业：</strong>rtsp://用户:密码@IP:554/Stream%201</p>
-          <p><strong>汉邦高科：</strong>rtsp://用户:密码@IP:554/Stream%201</p>
+          <p><strong>汉邦高科：</strong>rtsp://用户:密码@IP:554/stream1</p>
           <p><strong>华为：</strong>rtsp://用户:密码@IP:554/Live/Channels/101</p>
           <p className="text-gray-400 mt-2">
             选择品牌后，系统会自动适配正确的格式
@@ -643,8 +643,8 @@ function NetworkCamera() {
         // 天地伟业：rtsp://user:pass@ip:554/Stream%201
         return `rtsp://${base}/Stream%201`;
       case 'hanbang':
-        // 汉邦高科：rtsp://user:pass@ip:554/Stream%201
-        return `rtsp://${base}/Stream%201`;
+        // 汉邦高科：rtsp://user:pass@ip:554/stream1
+        return `rtsp://${base}/stream1`;
       case 'huawei':
         // 华为：rtsp://user:pass@ip:554/Live/Channels/101
         return `rtsp://${base}/Live/Channels/101`;
