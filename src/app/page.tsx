@@ -514,7 +514,7 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
       
       <div className="space-y-2">
         <Label>摄像头品牌</Label>
-        <Select value={config.brand} onValueChange={(value) => setConfig({...config, brand: value})}>
+        <Select value={config.brand} onValueChange={(value) => saveConfig({...config, brand: value})}>
           <SelectTrigger>
             <SelectValue placeholder="选择摄像头品牌" />
           </SelectTrigger>
@@ -602,15 +602,36 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
 function NetworkCamera() {
   const { addRecentRecord, refreshStats } = useApp();
   
-  const [config, setConfig] = useState<CameraConfig>({
-    name: '',
-    brand: 'hikvision',
-    rtspUrl: '',
-    ip: '',
-    port: '554',
-    username: '',
-    password: '',
+  // 从 localStorage 加载配置
+  const [config, setConfig] = useState<CameraConfig>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('cameraConfig');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error('加载摄像头配置失败:', e);
+        }
+      }
+    }
+    return {
+      name: '',
+      brand: 'hanbang',
+      rtspUrl: '',
+      ip: '',
+      port: '554',
+      username: '',
+      password: '',
+    };
   });
+  
+  // 保存配置到 localStorage
+  const saveConfig = useCallback((newConfig: CameraConfig) => {
+    setConfig(newConfig);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('cameraConfig', JSON.stringify(newConfig));
+    }
+  }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
   const [useMock, setUseMock] = useState(true);
@@ -786,7 +807,7 @@ function NetworkCamera() {
                 </DialogHeader>
                 <CameraSettings 
                   onSave={(c) => {
-                    setConfig(c);
+                    saveConfig(c);
                     setShowSettings(false);
                   }}
                   currentConfig={config}
