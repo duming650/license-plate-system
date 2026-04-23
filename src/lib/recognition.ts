@@ -47,8 +47,8 @@ function generateMockResult(): {
   specialType?: string;
   hasVehicle: boolean; // 是否识别到车辆
 } {
-  // 30%概率没有车辆
-  if (Math.random() < 0.3) {
+  // 60%概率没有车辆或没有人（画面静止/只有背景）
+  if (Math.random() < 0.6) {
     return {
       plateNumber: null,
       vehicleType: 'unknown',
@@ -58,6 +58,7 @@ function generateMockResult(): {
     };
   }
 
+  // 40%概率有车辆
   const plate = MOCK_PLATES[Math.floor(Math.random() * MOCK_PLATES.length)];
   const type = MOCK_TYPES[Math.floor(Math.random() * MOCK_TYPES.length)];
   const color = MOCK_COLORS[Math.floor(Math.random() * MOCK_COLORS.length)];
