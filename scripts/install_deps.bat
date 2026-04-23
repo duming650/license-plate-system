@@ -1,48 +1,57 @@
 @echo off
-REM Python 依赖安装脚本
-REM 需要先安装 Python: https://www.python.org/downloads/
+REM Python Dependencies Installation Script for License Plate Recognition System
 
 echo ========================================
-echo   车牌识别系统 - Python 依赖安装
+echo   License Plate Recognition System
+echo   Python Dependencies Installer
 echo ========================================
 echo.
 
-REM 检查 Python 是否安装
+REM Check if Python is installed
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [错误] 未检测到 Python，请先安装 Python 3.8+
-    echo 下载地址: https://www.python.org/downloads/
+    echo [ERROR] Python not found. Please install Python 3.8+ first.
+    echo Download: https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-echo [OK] Python 已安装
+echo [OK] Python is installed
 echo.
 
-echo 正在安装核心依赖...
+echo Installing dependencies...
 echo.
 
-echo 安装 OpenCV（用于车辆检测）...
+echo Step 1/3: Installing OpenCV (for vehicle detection)...
 pip install opencv-python -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 (
+    echo [WARNING] OpenCV installation may have issues
+)
 
 echo.
-echo 安装 NumPy...
+echo Step 2/3: Installing NumPy...
 pip install numpy -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 (
+    echo [WARNING] NumPy installation may have issues
+)
 
 echo.
-echo 安装 PaddleOCR（用于车牌识别）...
+echo Step 3/3: Installing PaddleOCR (for plate recognition)...
 pip install paddlepaddle paddleocr -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 (
+    echo [WARNING] PaddleOCR installation may have issues
+)
 
 echo.
 echo ========================================
-echo   安装完成！
+echo   Installation Complete!
 echo ========================================
 echo.
-echo 可选：安装 EasyOCR（备选OCR引擎）
-echo   pip install easyocr
-echo.
-echo 测试识别：
+echo To test the recognition:
 echo   python scripts\vehicle_recognize.py test.jpg
+echo.
+echo If you get errors, try installing manually:
+echo   pip install opencv-python numpy paddlepaddle paddleocr
 echo.
 
 pause
