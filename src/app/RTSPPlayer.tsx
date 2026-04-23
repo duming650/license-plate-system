@@ -110,35 +110,19 @@ export default function RTSPPlayer({
     };
   }, [isAutoRecognize, captureSnapshot, onSnapshot]);
 
-  // 手动截图
-  const handleCapture = useCallback(async () => {
+  // 手动截图 - 使用当前显示的图片
+  const handleCapture = useCallback(() => {
     console.log('手动截图按钮点击');
     
-    // 先获取最新一帧
-    try {
-      const res = await fetch(`/api/snapshot?url=${encodeURIComponent(url)}`);
-      const data = await res.json();
-      
-      if (data.success && data.image && onSnapshot) {
-        // 转换 data URL
-        const imageData = data.image;
-        onSnapshot(imageData);
-        toast.success('截图完成');
-        return;
-      }
-    } catch (err) {
-      console.error('获取截图失败:', err);
-    }
-    
-    // 降级：使用当前显示的图片
-    const imageData = captureSnapshot();
-    if (imageData && onSnapshot) {
-      onSnapshot(imageData);
+    // 直接使用当前显示的图片 URL
+    if (imageUrl && onSnapshot) {
+      // imageUrl 已经是 base64 格式
+      onSnapshot(imageUrl);
       toast.success('截图完成');
     } else {
-      toast.error('截图失败');
+      toast.error('截图失败，画面未加载');
     }
-  }, [url, captureSnapshot, onSnapshot]);
+  }, [imageUrl, onSnapshot]);
 
   return (
     <div className="relative w-full h-full">
