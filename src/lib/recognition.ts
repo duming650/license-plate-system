@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs';
 import { RecognitionResult, VehicleType, VehicleColor } from './data/types';
 import { isInternalVehicle, generateId } from './data/store';
 import { saveBase64Image } from './data/imageStore';
@@ -166,7 +167,18 @@ export async function recognizeVehicle(
     // 使用实际保存的图片路径
     const filename = imageUrl.replace('/uploads/', '');
     const imagePath = path.join(process.cwd(), 'public', 'uploads', filename);
-    console.log('[识别] 图片路径:', imagePath);
+    console.log('[识别] imageUrl:', imageUrl);
+    console.log('[识别] filename:', filename);
+    console.log('[识别] imagePath:', imagePath);
+    
+    // 检查图片是否存在
+    if (!fs.existsSync(imagePath)) {
+      console.error('[识别] 图片不存在:', imagePath);
+      console.log('[识别] public目录:', path.join(process.cwd(), 'public'));
+      console.log('[识别] uplo目录文件:', fs.existsSync(path.join(process.cwd(), 'public', 'uploads')) ? fs.readdirSync(path.join(process.cwd(), 'public', 'uploads')) : '目录不存在');
+      console.log('[识别] 回退到模拟模式');
+      return await mockRecognizeVehicle(imageBase64, direction) as any;
+    }
     
     try {
       const result = await callPythonRecognition(imagePath);
