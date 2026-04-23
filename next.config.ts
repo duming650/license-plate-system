@@ -1,9 +1,9 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // 忽略构建错误
-  typescript: {
-    ignoreBuildErrors: false,
+  // 禁用 Turbopack，使用传统的 webpack
+  experimental: {
+    turbo: undefined,
   },
 };
 
