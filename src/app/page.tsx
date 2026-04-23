@@ -442,17 +442,60 @@ function SummaryReport() {
   );
 }
 
-// 海康摄像头配置组件
+// 摄像头品牌选项
+const CAMERA_BRANDS = [
+  { value: 'hikvision', label: '海康威视 (Hikvision)' },
+  { value: 'dahua', label: '大华 (Dahua)' },
+  { value: 'uniview', label: '宇视 (Uniview)' },
+  { value: 'tiandy', label: '天地伟业 (Tiandy)' },
+  { value: 'huawei', label: '华为 (Huawei)' },
+  { value: 'other', label: '其他品牌' },
+];
+
+// 摄像头配置接口
+interface CameraConfig {
+  name: string;
+  brand: string;
+  rtspUrl: string;
+  ip: string;
+  port: string;
+  username: string;
+  password: string;
+}
+
+// 网络摄像头配置组件
 function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConfig) => void; currentConfig: CameraConfig }) {
   const [config, setConfig] = useState<CameraConfig>(currentConfig);
   
   const handleSave = () => {
-    if (!config.rtspUrl) {
-      toast.error('请输入 RTSP 地址');
+    if (!config.rtspUrl && !config.ip) {
+      toast.error('请输入 RTSP 地址或摄像头 IP');
+      return;
+    }
+    if (!config.rtspUrl && (!config.username || !config.password)) {
+      toast.error('请输入用户名和密码');
       return;
     }
     onSave(config);
     toast.success('摄像头配置已保存');
+  };
+  
+  // 根据品牌获取提示信息
+  const getBrandHint = () => {
+    switch (config.brand) {
+      case 'hikvision':
+        return 'rtsp://用户名:密码@IP:554/Streaming/Channels/101';
+      case 'dahua':
+        return 'rtsp://用户名:密码@IP:554/cam/realplay?chn=1&subtype=0';
+      case 'uniview':
+        return 'rtsp://用户名:密码@IP:554/media/video1';
+      case 'tiandy':
+        return 'rtsp://用户名:密码@IP:554/Stream%201';
+      case 'huawei':
+        return 'rtsp://用户名:密码@IP:554/Live/Channels/101';
+      default:
+        return 'rtsp://用户名:密码@IP:554/Streaming/Channels/101';
+    }
   };
   
   return (
@@ -467,15 +510,28 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
       </div>
       
       <div className="space-y-2">
-        <Label>RTSP 地址</Label>
+        <Label>摄像头品牌</Label>
+        <Select value={config.brand} onValueChange={(value) => setConfig({...config, brand: value})}>
+          <SelectTrigger>
+            <SelectValue placeholder="选择摄像头品牌" />
+          </SelectTrigger>
+          <SelectContent>
+            {CAMERA_BRANDS.map((brand) => (
+              <SelectItem key={brand.value} value={brand.value}>
+                {brand.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      
+      <div className="space-y-2">
+        <Label>RTSP 地址（可选，填写则优先使用）</Label>
         <Input 
           placeholder="rtsp://admin:password@192.168.1.64/Streaming/Channels/101"
           value={config.rtspUrl}
           onChange={(e) => setConfig({...config, rtspUrl: e.target.value})}
         />
-        <p className="text-xs text-gray-500">
-          海康摄像头格式：rtsp://用户名:密码@IP地址:554/Streaming/Channels/101
-        </p>
       </div>
       
       <div className="grid grid-cols-2 gap-4">
@@ -522,12 +578,15 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
       </Button>
       
       <div className="p-3 bg-gray-50 rounded-lg">
-        <h4 className="font-medium text-sm mb-2">RTSP 地址格式说明</h4>
+        <h4 className="font-medium text-sm mb-2">各品牌 RTSP 地址格式</h4>
         <div className="text-xs text-gray-600 space-y-1">
-          <p><strong>主码流：</strong>rtsp://用户:密码@IP:554/Streaming/Channels/101</p>
-          <p><strong>子码流：</strong>rtsp://用户:密码@IP:554/Streaming/Channels/102</p>
+          <p><strong>海康威视：</strong>rtsp://用户:密码@IP:554/Streaming/Channels/101</p>
+          <p><strong>大华：</strong>rtsp://用户:密码@IP:554/cam/realplay?chn=1</p>
+          <p><strong>宇视：</strong>rtsp://用户:密码@IP:554/media/video1</p>
+          <p><strong>天地伟业：</strong>rtsp://用户:密码@IP:554/Stream%201</p>
+          <p><strong>华为：</strong>rtsp://用户:密码@IP:554/Live/Channels/101</p>
           <p className="text-gray-400 mt-2">
-            Tip: 101 = 通道1主码流, 102 = 通道1子码流
+            选择品牌后，系统会自动适配正确的格式
           </p>
         </div>
       </div>
@@ -535,21 +594,13 @@ function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConf
   );
 }
 
-interface CameraConfig {
-  name: string;
-  rtspUrl: string;
-  ip: string;
-  port: string;
-  username: string;
-  password: string;
-}
-
-// 海康摄像头识别组件
-function HikvisionCamera() {
+// 网络摄像头识别组件
+function NetworkCamera() {
   const { addRecentRecord, refreshStats } = useApp();
   
   const [config, setConfig] = useState<CameraConfig>({
     name: '',
+    brand: 'hikvision',
     rtspUrl: '',
     ip: '',
     port: '554',
@@ -566,13 +617,35 @@ function HikvisionCamera() {
   const [isAutoRecognize, setIsAutoRecognize] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  // 生成 RTSP URL
+  // 生成 RTSP URL（根据品牌自动适配格式）
   const generateRTSPUrl = useCallback(() => {
     if (config.rtspUrl) return config.rtspUrl;
-    if (config.ip && config.username && config.password) {
-      return `rtsp://${config.username}:${config.password}@${config.ip}:${config.port}/Streaming/Channels/101`;
+    if (!config.ip || !config.username || !config.password) return '';
+    
+    const base = `${config.username}:${config.password}@${config.ip}:${config.port}`;
+    
+    // 根据不同品牌生成对应格式
+    switch (config.brand) {
+      case 'hikvision':
+        // 海康：rtsp://user:pass@ip:554/Streaming/Channels/101
+        return `rtsp://${base}/Streaming/Channels/101`;
+      case 'dahua':
+        // 大华：rtsp://user:pass@ip:554/cam/realplay?chn=1&subtype=0
+        return `rtsp://${base}/cam/realplay?chn=1&subtype=0`;
+      case 'uniview':
+        // 宇视：rtsp://user:pass@ip:554/media/video1
+        return `rtsp://${base}/media/video1`;
+      case 'tiandy':
+        // 天地伟业：rtsp://user:pass@ip:554/Stream%201
+        return `rtsp://${base}/Stream%201`;
+      case 'huawei':
+        // 华为：rtsp://user:pass@ip:554/Live/Channels/101
+        return `rtsp://${base}/Live/Channels/101`;
+      case 'other':
+      default:
+        // 通用格式
+        return `rtsp://${base}/Streaming/Channels/101`;
     }
-    return '';
   }, [config]);
   
   // 处理截图识别
@@ -651,10 +724,10 @@ function HikvisionCamera() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Monitor className="w-5 h-5 text-blue-600" />
-          海康摄像头识别
+          网络摄像头识别
         </CardTitle>
         <CardDescription>
-          {hasConfig ? `已连接：${config.name || config.ip}` : '请先配置摄像头'}
+          {hasConfig ? `已连接：${config.name || config.ip} (${CAMERA_BRANDS.find(b => b.value === config.brand)?.label || '未知品牌'})` : '请先配置摄像头'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -699,9 +772,9 @@ function HikvisionCamera() {
               </DialogTrigger>
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                  <DialogTitle>海康摄像头配置</DialogTitle>
+                  <DialogTitle>网络摄像头配置</DialogTitle>
                   <DialogDescription>
-                    输入海康摄像头的 RTSP 地址
+                    选择摄像头品牌，系统会自动适配 RTSP 格式
                   </DialogDescription>
                 </DialogHeader>
                 <CameraSettings 
@@ -1009,7 +1082,7 @@ export default function Home() {
           <TabsContent value="monitor">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* 海康摄像头识别 */}
-              <HikvisionCamera />
+              <NetworkCamera />
 
               {/* 图片上传识别 */}
               <Card>
