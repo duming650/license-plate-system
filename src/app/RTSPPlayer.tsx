@@ -19,7 +19,6 @@ export default function RTSPPlayer({
   isAutoRecognize = false 
 }: RTSPPlayerProps) {
   const imgRef = useRef<HTMLImageElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const [imageUrl, setImageUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -35,11 +34,12 @@ export default function RTSPPlayer({
       if (data.success && data.image) {
         setImageUrl(data.image);
         setLoading(false);
+        onPlay?.();
       }
     } catch (err) {
       console.error('截图失败:', err);
     }
-  }, [url]);
+  }, [url, onPlay]);
 
   // 初始化和定时刷新
   useEffect(() => {
@@ -48,7 +48,7 @@ export default function RTSPPlayer({
     // 立即获取
     fetchSnapshot();
     
-    // 每5秒刷新一次
+    // 每5秒刷新一次画面
     intervalRef.current = setInterval(fetchSnapshot, 5000);
 
     return () => {
@@ -58,18 +58,51 @@ export default function RTSPPlayer({
     };
   }, [url, fetchSnapshot]);
 
-  // 截取当前帧
-  const handleCapture = useCallback(() => {
-    if (!imageUrl) {
-      toast.error('画面未加载');
-      return;
-    }
+  // 监听自动识别事件
+  useEffect(() => {
+    if (!isAutoRecognize) return;
+
+    const handleAutoSnapshot = async () => {
+      console.log('自动识别触发');
+      try {
+        const res = await fetch(`/api/snapshot?url=${encodeURIComponent(url)}`);
+        const data = await res.json();
+        
+        if (data.success && data.image && onSnapshot) {
+          onSnapshot(data.image);
+        }
+      } catch (err) {
+        console.error('自动截图失败:', err);
+      }
+    };
+
+    // 监听自定义事件
+    window.addEventListener('hkv:snapshot', handleAutoSnapshot);
+
+    return () => {
+      window.removeEventListener('hkv:snapshot', handleAutoSnapshot);
+    };
+  }, [isAutoRecognize, url, onSnapshot]);
+
+  // 手动截图
+  const handleCapture = useCallback(async () => {
+    console.log('手动截图按钮点击');
     
-    if (onSnapshot) {
-      onSnapshot(imageUrl);
-      toast.success('截图完成');
+    try {
+      const res = await fetch(`/api/snapshot?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      
+      if (data.success && data.image && onSnapshot) {
+        onSnapshot(data.image);
+        toast.success('截图完成');
+      } else {
+        toast.error('截图失败');
+      }
+    } catch (err) {
+      console.error('截图失败:', err);
+      toast.error('截图失败');
     }
-  }, [imageUrl, onSnapshot]);
+  }, [url, onSnapshot]);
 
   return (
     <div className="relative w-full h-full bg-black">
