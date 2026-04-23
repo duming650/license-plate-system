@@ -6,6 +6,6 @@ echo Starting License Plate Recognition System...
 echo.
 
 set NEXT_DISABLE_TURBOPACK=1
-next dev
+npx next dev
 
 pause
