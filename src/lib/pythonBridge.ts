@@ -52,7 +52,7 @@ export async function callPythonRecognition(
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: '未找到 Python，请安装 Python 3.8+',
+        error: 'Python not found. Please install Python 3.8+',
       });
       return;
     }
@@ -67,18 +67,30 @@ export async function callPythonRecognition(
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: 'Python 脚本不存在',
+        error: 'Python script not found',
       });
       return;
     }
 
-    console.log(`[Python] 调用脚本: ${scriptPath}`);
-    console.log(`[Python] 图片路径: ${imagePath}`);
+    // 确保图片存在
+    if (!fs.existsSync(imagePath)) {
+      resolve({
+        success: false,
+        hasVehicle: false,
+        hasPerson: false,
+        plateNumber: null,
+        confidence: 0,
+        error: `Image not found: ${imagePath}`,
+      });
+      return;
+    }
+
+    console.log(`[Python] Calling script: ${scriptPath}`);
+    console.log(`[Python] Image path: ${imagePath}`);
 
     // 调用 Python 脚本
     const python = spawn(pythonPath, [scriptPath, imagePath], {
       windowsHide: true,
-      timeout: 30000, // 30秒超时
     });
 
     let stdout = '';
@@ -89,50 +101,57 @@ export async function callPythonRecognition(
     });
 
     python.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
+      const msg = data.toString();
+      // 打印调试信息
+      console.log(`[Python] ${msg}`);
+      stderr += msg;
     });
 
     python.on('error', (error: Error) => {
-      console.error('[Python] 启动失败:', error);
+      console.error('[Python] Start failed:', error);
       resolve({
         success: false,
         hasVehicle: false,
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: `Python 启动失败: ${error.message}`,
+        error: `Python start failed: ${error.message}`,
       });
     });
 
     python.on('close', (code: number) => {
-      console.log(`[Python] 脚本退出，代码: ${code}`);
+      console.log(`[Python] Script exited with code: ${code}`);
       
-      if (stderr) {
-        console.error('[Python] 错误输出:', stderr);
-      }
-
       if (code === 0 && stdout) {
         try {
           const result = JSON.parse(stdout);
-          console.log('[Python] 识别结果:', result);
+          console.log('[Python] Result:', result);
           resolve(result);
         } catch (e) {
-          console.error('[Python] 解析结果失败:', stdout);
+          console.error('[Python] Parse failed:', stdout);
           resolve({
             success: false,
             hasVehicle: false,
             hasPerson: false,
             plateNumber: null,
             confidence: 0,
-            error: '解析识别结果失败',
+            error: 'Parse result failed',
           });
         }
       } else {
-        // 尝试从错误信息中提取问题
-        let errorMsg = 'Python 脚本执行失败';
-        if (stderr.includes('need_install')) {
-          errorMsg = '请先安装 Python 依赖，运行: scripts\\install_deps.bat';
+        // 检查是否需要安装依赖
+        let errorMsg = 'Python script execution failed';
+        if (stderr.includes('need_install') || stderr.includes('not installed')) {
+          errorMsg = 'Python dependencies not installed. Please run: scripts\\install_deps.bat';
+        } else if (stderr) {
+          // 从 stderr 提取错误信息
+          const match = stderr.match(/error[:\s]*(.+)/i);
+          if (match) {
+            errorMsg = match[1].trim();
+          }
         }
+        
+        console.error('[Python] Error:', errorMsg);
         resolve({
           success: false,
           hasVehicle: false,
@@ -144,7 +163,7 @@ export async function callPythonRecognition(
       }
     });
 
-    // 30秒超时
+    // 60秒超时
     setTimeout(() => {
       python.kill();
       resolve({
@@ -153,9 +172,9 @@ export async function callPythonRecognition(
         hasPerson: false,
         plateNumber: null,
         confidence: 0,
-        error: '识别超时（30秒）',
+        error: 'Recognition timeout (60s)',
       });
-    }, 30000);
+    }, 60000);
   });
 }
 
@@ -175,7 +194,7 @@ export async function checkPythonEnv(): Promise<{
     if (!pythonPath) {
       resolve({
         available: false,
-        error: '未找到 Python，请安装 Python 3.8+',
+        error: 'Python not found. Please install Python 3.8+',
       });
       return;
     }
@@ -194,7 +213,7 @@ export async function checkPythonEnv(): Promise<{
     } catch {
       resolve({
         available: false,
-        error: '无法获取 Python 版本',
+        error: 'Cannot get Python version',
       });
     }
   });
