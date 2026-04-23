@@ -34,11 +34,13 @@ export default function RTSPPlayer({
       playerRef.current = new RTSPWebPlayer({
         video: videoRef.current,
         rtspUrl: url,
-        // 海康摄像头常用配置
+        // 摄像头通用配置（支持 H.264）
         options: {
-          bufferSize: 10,
+          bufferSize: 5,
           decodeFirstFrame: true,
-          maxBufferLength: 30,
+          maxBufferLength: 15,
+          disableAudio: true,
+          transport: 'tcp',
         },
         onPlay: () => {
           console.log('RTSP 播放成功');
