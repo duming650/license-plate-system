@@ -186,6 +186,50 @@ export async function getStats(): Promise<Stats> {
   return request<Stats>('/stats');
 }
 
+// ============ 汇总 API ============
+
+export interface SummaryData {
+  summary: {
+    totalCount: number;
+    todayCount: number;
+    startDate: string;
+    endDate: string;
+    generatedAt: string;
+  };
+  statusStats: {
+    internal: number;
+    normal: number;
+    special: number;
+    unlicensed: number;
+  };
+  typeStats: Record<string, number>;
+  colorStats: Record<string, number>;
+  directionStats: {
+    in: number;
+    out: number;
+  };
+  dailyStats: Record<string, { in: number; out: number; total: number }>;
+  hourlyStats: Record<number, { in: number; out: number; total: number }>;
+  internalRecords: any[];
+}
+
+export async function getSummary(startDate?: string, endDate?: string): Promise<SummaryData> {
+  const params = new URLSearchParams();
+  if (startDate) params.append('startDate', startDate);
+  if (endDate) params.append('endDate', endDate);
+  
+  return request<SummaryData>(`/summary?${params.toString()}`);
+}
+
+export function exportSummaryExcel(startDate?: string, endDate?: string): void {
+  const params = new URLSearchParams();
+  params.append('format', 'xlsx');
+  if (startDate) params.append('startDate', startDate);
+  if (endDate) params.append('endDate', endDate);
+  
+  window.open(`/api/summary?${params.toString()}`, '_blank');
+}
+
 // ============ 导出 API ============
 
 export function exportRecords(query: RecordsQuery = {}): void {

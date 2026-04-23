@@ -6,7 +6,8 @@ import {
   AlertTriangle, XCircle, CheckCircle, Clock, Search,
   Plus, Trash2, Eye, RefreshCw, TrendingUp,
   Video, VideoOff, Play, Pause, Settings, 
-  Wifi, WifiOff, Monitor
+  Wifi, WifiOff, Monitor, BarChart3, Calendar,
+  PieChart, TrendingDown, ArrowUpDown
 } from 'lucide-react';
 import { useApp, STATUS_COLORS, STATUS_NAMES, DIRECTION_NAMES, VEHICLE_TYPE_NAMES, VEHICLE_COLOR_NAMES } from '@/lib/context';
 import { 
@@ -17,8 +18,11 @@ import {
   deleteWhitelist,
   deleteRecord,
   exportRecords,
+  exportSummaryExcel,
+  getSummary,
   RecognizeResponse,
-  WhitelistVehicle
+  WhitelistVehicle,
+  SummaryData
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +62,385 @@ const VEHICLE_COLORS = [
   { value: 'green', label: '绿色' },
   { value: 'yellow', label: '黄色' },
 ];
+
+// 汇总报表组件
+function SummaryReport() {
+  const [summary, setSummary] = useState<SummaryData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // 加载汇总数据
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getSummary(startDate || undefined, endDate || undefined);
+      setSummary(data);
+    } catch (error) {
+      toast.error('加载汇总数据失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [startDate, endDate]);
+
+  useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
+
+  // 导出 Excel
+  const handleExport = () => {
+    exportSummaryExcel(startDate || undefined, endDate || undefined);
+    toast.success('开始导出 Excel 报表');
+  };
+
+  // 计算百分比
+  const calcPercent = (value: number, total: number) => {
+    if (total === 0) return '0%';
+    return ((value / total) * 100).toFixed(1) + '%';
+  };
+
+  if (!summary && loading) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>通行汇总报表</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!summary) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* 筛选条件 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-purple-600" />
+            通行汇总报表
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-2">
+              <Label>开始日期</Label>
+              <Input 
+                type="date" 
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-40"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>结束日期</Label>
+              <Input 
+                type="date" 
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-40"
+              />
+            </div>
+            <Button onClick={loadSummary} variant="outline" className="gap-2">
+              <Search className="w-4 h-4" />
+              查询
+            </Button>
+            <Button onClick={handleExport} className="gap-2 bg-purple-600 hover:bg-purple-700">
+              <Download className="w-4 h-4" />
+              导出 Excel
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 总体统计 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-blue-100 text-sm">总通行次数</p>
+                <p className="text-3xl font-bold">{summary.summary.totalCount}</p>
+              </div>
+              <ArrowUpDown className="w-10 h-10 text-blue-200" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-green-100 text-sm">今日通行</p>
+                <p className="text-3xl font-bold">{summary.summary.todayCount}</p>
+              </div>
+              <TrendingUp className="w-10 h-10 text-green-200" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-gradient-to-br from-orange-500 to-orange-600 text-white">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-orange-100 text-sm">特种车辆</p>
+                <p className="text-3xl font-bold">{summary.statusStats.special}</p>
+              </div>
+              <AlertTriangle className="w-10 h-10 text-orange-200" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="bg-gradient-to-br from-gray-500 to-gray-600 text-white">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-100 text-sm">无牌照</p>
+                <p className="text-3xl font-bold">{summary.statusStats.unlicensed}</p>
+              </div>
+              <XCircle className="w-10 h-10 text-gray-200" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 按状态和方向统计 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <PieChart className="w-5 h-5 text-blue-600" />
+              按状态统计
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <span className="font-medium">内部车辆</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-bold text-green-600">{summary.statusStats.internal}</span>
+                  <span className="text-sm text-gray-500 ml-2">
+                    {calcPercent(summary.statusStats.internal, summary.summary.totalCount)}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Car className="w-5 h-5 text-blue-600" />
+                  <span className="font-medium">外部车辆</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-bold text-blue-600">{summary.statusStats.normal}</span>
+                  <span className="text-sm text-gray-500 ml-2">
+                    {calcPercent(summary.statusStats.normal, summary.summary.totalCount)}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="w-5 h-5 text-orange-600" />
+                  <span className="font-medium">特种车辆</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-bold text-orange-600">{summary.statusStats.special}</span>
+                  <span className="text-sm text-gray-500 ml-2">
+                    {calcPercent(summary.statusStats.special, summary.summary.totalCount)}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <XCircle className="w-5 h-5 text-gray-600" />
+                  <span className="font-medium">无牌照</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-bold text-gray-600">{summary.statusStats.unlicensed}</span>
+                  <span className="text-sm text-gray-500 ml-2">
+                    {calcPercent(summary.statusStats.unlicensed, summary.summary.totalCount)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingDown className="w-5 h-5 text-purple-600" />
+              驶入/驶出统计
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <TrendingUp className="w-5 h-5 text-green-600" />
+                  <span className="font-medium">驶入</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-bold text-green-600">{summary.directionStats.in}</span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <TrendingDown className="w-5 h-5 text-red-600 rotate-180" />
+                  <span className="font-medium">驶出</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-bold text-red-600">{summary.directionStats.out}</span>
+                </div>
+              </div>
+
+              {/* 今日时段分布 */}
+              <div className="mt-6">
+                <h4 className="font-medium text-sm text-gray-600 mb-3">今日通行时段分布</h4>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {Object.entries(summary.hourlyStats)
+                    .filter(([_, stats]) => stats.total > 0)
+                    .sort(([a], [b]) => Number(b) - Number(a))
+                    .slice(0, 10)
+                    .map(([hour, stats]) => (
+                      <div key={hour} className="flex items-center gap-2 text-sm">
+                        <span className="w-12 text-gray-500">{hour}:00</span>
+                        <div className="flex-1 bg-gray-100 rounded-full h-2">
+                          <div 
+                            className="bg-purple-500 h-2 rounded-full"
+                            style={{ width: `${Math.min(100, (stats.total / Math.max(...Object.values(summary.hourlyStats).map(s => s.total || 1))) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="w-8 text-right font-medium">{stats.total}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 按车辆类型统计 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Car className="w-5 h-5 text-blue-600" />
+            按车辆类型统计
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Object.entries(summary.typeStats)
+              .filter(([_, count]) => count > 0)
+              .sort(([_, a], [__, b]) => Number(b) - Number(a))
+              .map(([type, count]) => (
+                <div key={type} className="p-4 border rounded-lg hover:shadow-md transition-shadow">
+                  <p className="text-sm text-gray-500">{VEHICLE_TYPE_NAMES[type] || type}</p>
+                  <p className="text-2xl font-bold text-gray-900">{count}</p>
+                  <p className="text-xs text-gray-400">{calcPercent(count, summary.summary.totalCount)}</p>
+                </div>
+              ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 按日统计（最近30天） */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-green-600" />
+            近30天通行趋势
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {Object.entries(summary.dailyStats)
+              .sort(([a], [b]) => b.localeCompare(a))
+              .map(([date, stats]) => (
+                <div key={date} className="flex items-center gap-4 text-sm">
+                  <span className="w-24 text-gray-500">{date}</span>
+                  <div className="flex-1 flex items-center gap-2">
+                    <div className="flex items-center gap-1 w-20">
+                      <TrendingUp className="w-3 h-3 text-green-600" />
+                      <span className="text-green-600">{stats.in}</span>
+                    </div>
+                    <div className="flex items-center gap-1 w-20">
+                      <TrendingDown className="w-3 h-3 text-red-600" />
+                      <span className="text-red-600">{stats.out}</span>
+                    </div>
+                  </div>
+                  <div className="w-24">
+                    <div className="bg-blue-500 h-2 rounded-full" 
+                         style={{ width: `${Math.min(100, (stats.total / Math.max(...Object.values(summary.dailyStats).map(s => s.total || 1))) * 100)}%` }} />
+                  </div>
+                  <span className="w-8 text-right font-medium">{stats.total}</span>
+                </div>
+              ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 内部车辆明细 */}
+      {summary.internalRecords.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle className="w-5 h-5 text-green-600" />
+              内部车辆通行明细
+            </CardTitle>
+            <CardDescription>共 {summary.internalRecords.length} 条记录</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>车牌号</TableHead>
+                  <TableHead>车辆类型</TableHead>
+                  <TableHead>颜色</TableHead>
+                  <TableHead>通行时间</TableHead>
+                  <TableHead>方向</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.internalRecords.slice(0, 20).map((record, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell className="font-medium text-green-600">{record.plateNumber}</TableCell>
+                    <TableCell>{VEHICLE_TYPE_NAMES[record.vehicleType] || record.vehicleType}</TableCell>
+                    <TableCell>{VEHICLE_COLOR_NAMES[record.color] || record.color}</TableCell>
+                    <TableCell>{new Date(record.createdAt).toLocaleString('zh-CN')}</TableCell>
+                    <TableCell>
+                      <Badge variant={record.direction === 'in' ? 'default' : 'secondary'}>
+                        {DIRECTION_NAMES[record.direction]}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {summary.internalRecords.length > 20 && (
+              <p className="text-sm text-gray-500 mt-2 text-center">
+                仅显示前20条，查看全部请导出 Excel
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 // 海康摄像头配置组件
 function CameraSettings({ onSave, currentConfig }: { onSave: (config: CameraConfig) => void; currentConfig: CameraConfig }) {
@@ -612,6 +995,10 @@ export default function Home() {
               <FileText className="w-4 h-4" />
               通行记录
             </TabsTrigger>
+            <TabsTrigger value="summary" className="gap-2">
+              <BarChart3 className="w-4 h-4" />
+              汇总报表
+            </TabsTrigger>
             <TabsTrigger value="whitelist" className="gap-2">
               <Users className="w-4 h-4" />
               白名单管理
@@ -770,6 +1157,11 @@ export default function Home() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* 汇总报表页 */}
+          <TabsContent value="summary">
+            <SummaryReport />
           </TabsContent>
 
           {/* 白名单管理页 */}
