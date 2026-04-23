@@ -1,0 +1,16 @@
+[
+  {
+    "id": "record_1776903888803_2yiry",
+    "plateNumber": "无牌照",
+    "vehicleType": "bus",
+    "color": "green",
+    "direction": "in",
+    "status": "unlicensed",
+    "confidence": 94.66527801246501,
+    "confidencePlate": 82.21225238391582,
+    "confidenceType": 72.52521751581673,
+    "confidenceColor": 84.19960603418498,
+    "imageUrl": "/uploads/vehicle_in_1776903888802_xlhg2.png",
+    "createdAt": "2026-04-23T00:24:48.804Z"
+  }
+]
