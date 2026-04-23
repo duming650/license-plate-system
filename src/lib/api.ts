@@ -47,6 +47,9 @@ export interface RecognizeResponse {
   imageUrl: string;
   remark?: string;
   createdAt: string;
+  // 新增字段：是否识别到车辆
+  hasVehicle?: boolean;
+  message?: string;
 }
 
 export async function recognizeVehicle(

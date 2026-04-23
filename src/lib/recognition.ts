@@ -45,7 +45,19 @@ function generateMockResult(): {
   confidenceColor?: number;
   isSpecial: boolean;
   specialType?: string;
+  hasVehicle: boolean; // 是否识别到车辆
 } {
+  // 30%概率没有车辆
+  if (Math.random() < 0.3) {
+    return {
+      plateNumber: null,
+      vehicleType: 'unknown',
+      vehicleColor: 'other',
+      confidence: 0,
+      hasVehicle: false,
+    };
+  }
+
   const plate = MOCK_PLATES[Math.floor(Math.random() * MOCK_PLATES.length)];
   const type = MOCK_TYPES[Math.floor(Math.random() * MOCK_TYPES.length)];
   const color = MOCK_COLORS[Math.floor(Math.random() * MOCK_COLORS.length)];
@@ -60,6 +72,7 @@ function generateMockResult(): {
     confidenceColor: 75 + Math.random() * 20,
     isSpecial: type === 'special',
     specialType: type === 'special' ? MOCK_SPECIAL_TYPES[Math.floor(Math.random() * MOCK_SPECIAL_TYPES.length)] : undefined,
+    hasVehicle: true,
   };
 }
 
@@ -178,6 +191,7 @@ export function mockRecognizeVehicle(
   status: 'normal' | 'internal' | 'special' | 'unlicensed';
   imageUrl: string;
   recordId: string;
+  hasVehicle: boolean;
 } {
   const imageUrl = saveBase64Image(imageBase64, `vehicle_${direction}`);
   
@@ -208,5 +222,6 @@ export function mockRecognizeVehicle(
     status,
     imageUrl,
     recordId: `record_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    hasVehicle: mockResult.hasVehicle,
   };
 }

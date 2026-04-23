@@ -687,6 +687,14 @@ function NetworkCamera() {
     
     try {
       const result = await recognizeVehicle(imageData, direction, useMock);
+      
+      // 检查是否识别到车辆
+      if (!result.hasVehicle) {
+        toast('未检测到车辆', { duration: 2000 });
+        setIsRecognizing(false);
+        return;
+      }
+      
       addRecentRecord(result);
       
       if (result.status === 'internal') {

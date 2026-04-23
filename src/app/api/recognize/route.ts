@@ -29,6 +29,16 @@ export async function POST(request: NextRequest) {
       ? mockRecognizeVehicle(imageData, direction)
       : await recognizeVehicle(imageData, direction);
 
+    // 检查是否识别到车辆
+    if (!result.hasVehicle) {
+      return NextResponse.json({
+        success: true,
+        data: null,
+        message: '未检测到车辆',
+        hasVehicle: false,
+      });
+    }
+
     // 创建记录
     const record: VehicleRecord = {
       id: result.recordId,
@@ -52,6 +62,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: record,
+      hasVehicle: true,
     });
   } catch (error) {
     console.error('识别错误:', error);
