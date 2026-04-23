@@ -21,15 +21,28 @@ export default function RTSPPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isUsingFFmpeg, setIsUsingFFmpeg] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
 
-  // 初始化原生播放器
-  const initNativePlayer = useCallback(async () => {
+  // 初始化播放器
+  const initPlayer = useCallback(async () => {
     if (!videoRef.current || !url) return;
+    
+    setStatus('loading');
+    console.log('初始化播放器，URL:', url);
 
     try {
+      // 动态导入 rtsp-web-player
       const { default: RTSPWebPlayer } = await import('rtsp-web-player');
+      
+      // 清理旧播放器
+      if (playerRef.current) {
+        if (typeof playerRef.current.destroy === 'function') {
+          playerRef.current.destroy();
+        } else if (typeof playerRef.current.stop === 'function') {
+          playerRef.current.stop();
+        }
+        playerRef.current = null;
+      }
       
       playerRef.current = new RTSPWebPlayer({
         video: videoRef.current,
@@ -43,103 +56,69 @@ export default function RTSPPlayer({
         },
         onPlay: () => {
           console.log('RTSP 播放成功');
-          setIsUsingFFmpeg(false);
+          setStatus('playing');
           onPlay?.();
         },
-        onError: (error: Error) => {
+        onError: (error: any) => {
           console.error('RTSP 播放错误:', error);
-          // 原生播放失败，尝试 FFmpeg
-          initFFmpegPlayer();
+          setStatus('error');
+          toast.error('摄像头连接失败，请检查 RTSP 地址是否正确');
         },
         onDisconnect: () => {
           console.log('RTSP 断开');
+          setStatus('error');
           onStop?.();
         },
       });
 
       await playerRef.current.play();
     } catch (error) {
-      console.error('原生播放器失败:', error);
-      initFFmpegPlayer();
+      console.error('初始化播放器失败:', error);
+      setStatus('error');
+      toast.error('无法连接摄像头，请检查 RTSP 地址');
     }
   }, [url, onPlay, onStop]);
-
-  // 使用 FFmpeg 转码播放
-  const initFFmpegPlayer = useCallback(async () => {
-    if (!videoRef.current || !url || !videoRef.current.src) return;
-
-    try {
-      setIsUsingFFmpeg(true);
-      
-      // 创建 HLS 流地址（通过 API 代理）
-      const hlsUrl = `/api/stream?url=${encodeURIComponent(url)}`;
-      
-      // 动态加载 HLS.js
-      const Hls = (await import('hls.js')).default;
-      
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: true,
-        });
-        
-        hls.loadSource(hlsUrl);
-        hls.attachMedia(videoRef.current);
-        
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log('HLS 流加载成功');
-          videoRef.current?.play();
-          onPlay?.();
-        });
-        
-        hls.on(Hls.Events.ERROR, (event: any, data: any) => {
-          console.error('HLS 错误:', data);
-          if (data.fatal) {
-            toast.error('视频流加载失败');
-          }
-        });
-        
-        playerRef.current = hls;
-      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari 原生支持 HLS
-        videoRef.current.src = hlsUrl;
-        videoRef.current.play();
-        onPlay?.();
-      }
-    } catch (error) {
-      console.error('FFmpeg 播放失败:', error);
-      toast.error('无法播放视频流');
-    }
-  }, [url, onPlay]);
 
   // 初始化播放器
   useEffect(() => {
     if (!url) return;
     
-    initNativePlayer();
+    // 延迟初始化，等待 DOM 准备好
+    const timer = setTimeout(() => {
+      initPlayer();
+    }, 500);
     
     return () => {
+      clearTimeout(timer);
       if (playerRef.current) {
-        if (typeof playerRef.current.destroy === 'function') {
-          playerRef.current.destroy();
-        } else if (typeof playerRef.current.stop === 'function') {
-          playerRef.current.stop();
-        } else if (typeof playerRef.current.disconnect === 'function') {
-          playerRef.current.disconnect();
+        try {
+          if (typeof playerRef.current.destroy === 'function') {
+            playerRef.current.destroy();
+          } else if (typeof playerRef.current.stop === 'function') {
+            playerRef.current.stop();
+          } else if (typeof playerRef.current.disconnect === 'function') {
+            playerRef.current.disconnect();
+          }
+        } catch (e) {
+          console.error('清理播放器失败:', e);
         }
         playerRef.current = null;
       }
     };
-  }, [url, initNativePlayer]);
+  }, [url, initPlayer]);
 
   // 截取当前帧
   const captureSnapshot = useCallback((): string | null => {
-    if (!videoRef.current || !canvasRef.current) return null;
+    if (!videoRef.current || !canvasRef.current) {
+      console.log('videoRef 或 canvasRef 不存在');
+      return null;
+    }
 
     const video = videoRef.current;
 
     if (video.videoWidth === 0 || video.videoHeight === 0) {
-      console.log('视频尚未加载完成');
+      console.log('视频尚未加载完成，状态:', status);
+      toast.warning('视频尚未加载完成，请稍候');
       return null;
     }
 
@@ -152,13 +131,14 @@ export default function RTSPPlayer({
     ctx.drawImage(video, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
     return canvasRef.current.toDataURL('image/jpeg', 0.9);
-  }, []);
+  }, [status]);
 
   // 处理自动截图
   useEffect(() => {
     if (!isAutoRecognize) return;
 
     const handleSnapshot = () => {
+      console.log('自动识别触发');
       const imageData = captureSnapshot();
       if (imageData && onSnapshot) {
         onSnapshot(imageData);
@@ -174,38 +154,51 @@ export default function RTSPPlayer({
 
   // 手动截图
   const handleCapture = useCallback(() => {
+    console.log('手动截图按钮点击');
     const imageData = captureSnapshot();
     if (imageData && onSnapshot) {
       onSnapshot(imageData);
       toast.success('截图完成');
-    } else {
-      toast.error('截图失败，视频未加载');
     }
   }, [captureSnapshot, onSnapshot]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full">
+    <div className="relative w-full h-full">
       <video
         ref={videoRef}
         className="w-full h-full object-contain bg-black"
         playsInline
         muted
+        autoPlay
       />
       
       {/* 隐藏的画布用于截图 */}
       <canvas ref={canvasRef} className="hidden" />
       
-      {/* 播放状态指示 */}
-      {isUsingFFmpeg && (
-        <div className="absolute top-2 left-2 px-2 py-1 bg-blue-500/80 text-white text-xs rounded">
-          FFmpeg 转码中
+      {/* 状态指示 */}
+      {status === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+          <div className="text-white text-center">
+            <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
+            <p>正在连接摄像头...</p>
+          </div>
+        </div>
+      )}
+      
+      {status === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80">
+          <div className="text-red-400 text-center p-4">
+            <p className="font-bold mb-2">摄像头连接失败</p>
+            <p className="text-sm text-gray-400">请检查 RTSP 地址是否正确</p>
+            <p className="text-xs text-gray-500 mt-2">提示: {url}</p>
+          </div>
         </div>
       )}
       
       {/* 手动截图按钮 */}
       <button
         onClick={handleCapture}
-        className="absolute bottom-2 right-2 px-3 py-1 bg-white/90 hover:bg-white text-gray-800 text-sm rounded shadow"
+        className="absolute bottom-2 right-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded shadow transition-colors"
       >
         截图识别
       </button>
