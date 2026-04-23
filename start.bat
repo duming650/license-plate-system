@@ -1,11 +1,16 @@
 @echo off
-REM Start License Plate Recognition System
-REM Disable Turbopack for Windows compatibility
-
 echo Starting License Plate Recognition System...
 echo.
 
-set NEXT_DISABLE_TURBOPACK=1
+REM Check Node.js
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Node.js not found!
+    pause
+    exit /b 1
+)
+
+REM Start Next.js
 npx next dev
 
 pause
