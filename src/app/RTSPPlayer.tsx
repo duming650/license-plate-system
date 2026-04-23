@@ -48,23 +48,14 @@ export default function RTSPPlayer({
         setStatus('error');
       });
 
-    // 每秒更新一次画面
+    // 每3秒更新一次画面
     intervalRef.current = setInterval(() => {
-      fetch(`/api/snapshot?url=${encodeURIComponent(url)}&t=${Date.now()}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.image) {
-            setImageUrl(data.image + `&t=${Date.now()}`);
-            if (status !== 'playing') {
-              setStatus('playing');
-              onPlay?.();
-            }
-          }
-        })
-        .catch(err => {
-          console.error('定时截图失败:', err);
-        });
-    }, 1000);
+      const timestamp = Date.now();
+      setImageUrl(prev => {
+        // 添加时间戳强制刷新
+        return prev ? prev.split('&t=')[0] + `&t=${timestamp}` : prev;
+      });
+    }, 3000);
 
     return () => {
       if (intervalRef.current) {
