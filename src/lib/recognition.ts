@@ -163,7 +163,10 @@ export async function recognizeVehicle(
   if (usePython) {
     console.log('[识别] 使用 Python 脚本模式');
     
-    const imagePath = path.join(process.cwd(), 'public', 'uploads', `vehicle_${direction}_${Date.now()}.jpg`);
+    // 使用实际保存的图片路径
+    const filename = imageUrl.replace('/uploads/', '');
+    const imagePath = path.join(process.cwd(), 'public', 'uploads', filename);
+    console.log('[识别] 图片路径:', imagePath);
     
     try {
       const result = await callPythonRecognition(imagePath);
