@@ -21,144 +21,75 @@ export default function RTSPPlayer({
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [imageUrl, setImageUrl] = useState<string>('');
+  const [loading, setLoading] = useState(true);
 
-  // 使用 FFmpeg 定时截图
+  // 获取截图
+  const fetchSnapshot = useCallback(async () => {
+    if (!url) return;
+    
+    try {
+      const res = await fetch(`/api/snapshot?url=${encodeURIComponent(url)}&_=${Date.now()}`);
+      const data = await res.json();
+      
+      if (data.success && data.image) {
+        setImageUrl(data.image);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error('截图失败:', err);
+    }
+  }, [url]);
+
+  // 初始化和定时刷新
   useEffect(() => {
     if (!url) return;
     
-    setStatus('loading');
-    console.log('使用 FFmpeg 截图模式，URL:', url);
-
-    // 立即获取第一帧
-    fetch(`/api/snapshot?url=${encodeURIComponent(url)}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.image) {
-          setImageUrl(data.image);
-          setStatus('playing');
-          onPlay?.();
-        } else {
-          setStatus('error');
-        }
-      })
-      .catch(err => {
-        console.error('截图失败:', err);
-        setStatus('error');
-      });
-
-    // 每3秒更新一次画面
-    intervalRef.current = setInterval(() => {
-      const timestamp = Date.now();
-      setImageUrl(prev => {
-        // 添加时间戳强制刷新
-        return prev ? prev.split('&t=')[0] + `&t=${timestamp}` : prev;
-      });
-    }, 3000);
+    // 立即获取
+    fetchSnapshot();
+    
+    // 每5秒刷新一次
+    intervalRef.current = setInterval(fetchSnapshot, 5000);
 
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
-        intervalRef.current = null;
       }
     };
-  }, [url, onPlay, status]);
+  }, [url, fetchSnapshot]);
 
   // 截取当前帧
-  const captureSnapshot = useCallback((): string | null => {
-    if (!imgRef.current || !canvasRef.current) {
-      console.log('imgRef 或 canvasRef 不存在');
-      return null;
-    }
-
-    const img = imgRef.current;
-
-    if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-      console.log('图片尚未加载完成');
-      toast.warning('视频尚未加载完成，请稍候');
-      return null;
-    }
-
-    canvasRef.current.width = img.naturalWidth;
-    canvasRef.current.height = img.naturalHeight;
-
-    const ctx = canvasRef.current.getContext('2d');
-    if (!ctx) return null;
-
-    ctx.drawImage(img, 0, 0, canvasRef.current.width, canvasRef.current.height);
-
-    return canvasRef.current.toDataURL('image/jpeg', 0.9);
-  }, []);
-
-  // 处理自动截图
-  useEffect(() => {
-    if (!isAutoRecognize) return;
-
-    const handleSnapshot = () => {
-      console.log('自动识别触发');
-      const imageData = captureSnapshot();
-      if (imageData && onSnapshot) {
-        onSnapshot(imageData);
-      }
-    };
-
-    window.addEventListener('hkv:snapshot', handleSnapshot);
-
-    return () => {
-      window.removeEventListener('hkv:snapshot', handleSnapshot);
-    };
-  }, [isAutoRecognize, captureSnapshot, onSnapshot]);
-
-  // 手动截图 - 使用当前显示的图片
   const handleCapture = useCallback(() => {
-    console.log('手动截图按钮点击');
+    if (!imageUrl) {
+      toast.error('画面未加载');
+      return;
+    }
     
-    // 直接使用当前显示的图片 URL
-    if (imageUrl && onSnapshot) {
-      // imageUrl 已经是 base64 格式
+    if (onSnapshot) {
       onSnapshot(imageUrl);
       toast.success('截图完成');
-    } else {
-      toast.error('截图失败，画面未加载');
     }
   }, [imageUrl, onSnapshot]);
 
   return (
-    <div className="relative w-full h-full">
-      {/* 使用 img 标签显示截图 */}
+    <div className="relative w-full h-full bg-black">
       <img
         ref={imgRef}
         src={imageUrl}
         alt="摄像头画面"
-        className="w-full h-full object-contain bg-black"
+        className="w-full h-full object-contain"
+        style={{ display: loading ? 'none' : 'block' }}
       />
       
-      {/* 隐藏的画布用于截图 */}
-      <canvas ref={canvasRef} className="hidden" />
-      
-      {/* 状态指示 */}
-      {status === 'loading' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-white text-center">
             <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
-            <p>正在连接摄像头...</p>
-            <p className="text-xs text-gray-400 mt-2">使用 FFmpeg 拉取画面</p>
+            <p>加载中...</p>
           </div>
         </div>
       )}
       
-      {status === 'error' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80">
-          <div className="text-red-400 text-center p-4">
-            <p className="font-bold mb-2">摄像头连接失败</p>
-            <p className="text-sm text-gray-400">FFmpeg 无法获取视频流</p>
-            <p className="text-xs text-gray-500 mt-2">提示: 请检查 RTSP 地址是否正确</p>
-          </div>
-        </div>
-      )}
-      
-      {/* 手动截图按钮 */}
       <button
         onClick={handleCapture}
         className="absolute bottom-2 right-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded shadow transition-colors"
