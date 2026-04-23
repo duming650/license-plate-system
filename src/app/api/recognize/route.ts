@@ -1,14 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { recognizeVehicle } from '@/lib/recognition';
+import { recognizeVehicle, getPythonStatus } from '@/lib/recognition';
 import { saveRecord } from '@/lib/data/store';
-import { VehicleRecord, VehicleColor } from '@/lib/data/types';
+import { VehicleRecord } from '@/lib/data/types';
 
 export const runtime = 'nodejs';
 
+// GET: 检查 Python 环境
+export async function GET() {
+  try {
+    const pythonStatus = await getPythonStatus();
+    return NextResponse.json({
+      success: true,
+      python: pythonStatus,
+    });
+  } catch (error: any) {
+    return NextResponse.json({
+      success: false,
+      error: error.message,
+    });
+  }
+}
+
+// POST: 执行识别
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { imageData, direction, useMock, useTensorflow } = body;
+    const { imageData, direction, useMock } = body;
 
     if (!imageData || !direction) {
       return NextResponse.json(
@@ -25,11 +42,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 调用识别函数
-    const result = await recognizeVehicle(imageData, direction, useMock, useTensorflow);
+    // useMock=true 使用模拟模式，useMock=false 使用 Python 脚本模式
+    const result = await recognizeVehicle(imageData, direction, useMock === true, true);
     
-    // 检查是否识别到车辆（模拟模式需要检查）
-    // 注意：TensorFlow.js 模式由浏览器端处理，这里只检查模拟模式
-    if (useMock && result.plateNumber === null && result.vehicleType === 'unknown') {
+    // 检查是否识别到车辆
+    if (!result.hasVehicle) {
       return NextResponse.json({
         success: true,
         data: null,

@@ -63,6 +63,7 @@ export interface RecognitionResult {
   confidenceColor?: number;
   isSpecial: boolean;           // 是否特种车辆
   specialType?: string;         // 特种车辆类型
+  hasVehicle?: boolean;         // 是否检测到车辆
 }
 
 // API 请求/响应类型

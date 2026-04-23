@@ -640,8 +640,7 @@ function NetworkCamera() {
   }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
-  const [useMock, setUseMock] = useState(false);
-	const [useTensorflow, setUseTensorflow] = useState(true);
+  const [useMock, setUseMock] = useState(false); // true=模拟模式，false=Python脚本模式
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [lastRecognizeTime, setLastRecognizeTime] = useState(0);
@@ -693,53 +692,14 @@ function NetworkCamera() {
     setLastRecognizeTime(now);
     
     try {
-      // 本地AI识别模式 - 在浏览器中使用 TensorFlow.js
-      if (useTensorflow && !useMock) {
-        toast.info('正在使用本地AI检测...');
-        
-        // 动态导入 TensorFlow.js
-        const { tfRecognize } = await import('@/lib/tfDetection');
-        
-        // 创建一个图片元素用于检测
-        const img = new Image();
-        img.src = imageData;
-        await new Promise((resolve) => { img.onload = resolve; });
-        
-        // 在浏览器中进行车辆检测
-        const tfResult = await tfRecognize(img);
-        
-        if (!tfResult.hasVehicle) {
-          if (tfResult.hasPerson) {
-            toast.error('检测到人而非车辆，不记录', { duration: 2000 });
-          } else {
-            toast.error('未检测到车辆', { duration: 2000 });
-          }
-          setIsRecognizing(false);
-          return;
-        }
-        
-        // 检测到车辆，调用 API 保存记录
-        const result = await recognizeVehicle(imageData, direction, false, true);
-        
-        addRecentRecord(result);
-        
-        if (result.status === 'internal') {
-          toast.success(`内部车辆: ${result.plateNumber}`, { duration: 2000 });
-        } else if (result.status === 'special') {
-          toast.warning(`特种车辆: ${result.plateNumber || '无牌照'} - ${result.remark || ''}`, { duration: 3000 });
-        } else if (result.status === 'unlicensed') {
-          toast.error(`无牌照车辆`, { duration: 3000 });
-        } else {
-          toast.success(`外部车辆: ${result.plateNumber}`, { duration: 2000 });
-        }
-        
-        refreshStats();
-        setIsRecognizing(false);
-        return;
+      // 直接调用 API，Python 模式在后端执行
+      if (useMock) {
+        toast.info('使用模拟模式...');
+      } else {
+        toast.info('正在识别...');
       }
       
-      // 模拟模式或API模式 - 直接调用 API
-      const result = await recognizeVehicle(imageData, direction, useMock, useTensorflow);
+      const result = await recognizeVehicle(imageData, direction, useMock);
       
       // 检查是否识别到车辆
       if (!result.hasVehicle) {
@@ -763,11 +723,11 @@ function NetworkCamera() {
       refreshStats();
     } catch (err: any) {
       console.error('识别失败:', err);
-      toast.error('识别失败');
+      toast.error(err.message || '识别失败');
     } finally {
       setIsRecognizing(false);
     }
-  }, [direction, useMock, useTensorflow, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
+  }, [direction, useMock, isRecognizing, lastRecognizeTime, addRecentRecord, refreshStats]);
   
   // 自动识别
   const startAutoRecognize = useCallback(() => {
@@ -931,19 +891,6 @@ function NetworkCamera() {
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  id="useTensorflow"
-                  checked={useTensorflow}
-                  onChange={(e) => setUseTensorflow(e.target.checked)}
-                  className="rounded"
-                />
-                <Label htmlFor="useTensorflow" className="text-sm">
-                  本地AI识别
-                </Label>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
                   id="useMockHikvision"
                   checked={useMock}
                   onChange={(e) => setUseMock(e.target.checked)}
@@ -1064,40 +1011,20 @@ export default function Home() {
       reader.onload = async (event) => {
         const base64 = event.target?.result as string;
         try {
-          // 本地AI识别模式 - 在浏览器中使用 TensorFlow.js
-          if (useTensorflow && !useMock) {
-            toast.info('正在使用本地AI检测...');
-            
-            // 动态导入 TensorFlow.js
-            const { tfRecognize } = await import('@/lib/tfDetection');
-            
-            // 创建一个图片元素用于检测
-            const img = new Image();
-            img.src = base64;
-            await new Promise((resolve) => { img.onload = resolve; });
-            
-            // 在浏览器中进行车辆检测
-            const tfResult = await tfRecognize(img);
-            
-            if (!tfResult.hasVehicle) {
-              if (tfResult.hasPerson) {
-                toast.error('检测到人而非车辆，不记录');
-              } else {
-                toast.error('未检测到车辆');
-              }
-              return;
-            }
-            
-            // 检测到车辆，调用 API 保存记录
-            const apiResult = await recognizeVehicle(base64, dir, false, true);
-            addRecentRecord(apiResult);
-            await loadRecords();
-            toast.success(`识别成功：${apiResult.plateNumber || '无牌照'} (${tfResult.result.vehicleType})`);
+          // 直接调用 API
+          if (useMock) {
+            toast.info('使用模拟模式...');
+          } else {
+            toast.info('正在识别...');
+          }
+          
+          const result = await recognizeVehicle(base64, dir, useMock);
+          
+          if (!result.hasVehicle) {
+            toast.error('未检测到车辆');
             return;
           }
           
-          // 模拟模式或API模式 - 直接调用 API
-          const result = await recognizeVehicle(base64, dir, useMock, useTensorflow);
           addRecentRecord(result);
           await loadRecords();
           toast.success(`识别成功：${result.plateNumber || '无牌照'}`);
@@ -1248,17 +1175,6 @@ export default function Home() {
                     </div>
                     
                     <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="checkbox" 
-                          id="useTensorflowUpload" 
-                          checked={useTensorflow} 
-                          onChange={(e) => setUseTensorflow(e.target.checked)} 
-                          className="rounded" 
-                        />
-                        <Label htmlFor="useTensorflowUpload" className="text-sm">本地AI识别</Label>
-                      </div>
-                      
                       <div className="flex items-center gap-2">
                         <input type="checkbox" id="useMockUpload" checked={useMock} onChange={(e) => setUseMock(e.target.checked)} className="rounded" />
                         <Label htmlFor="useMockUpload" className="text-sm text-gray-500">模拟模式</Label>
