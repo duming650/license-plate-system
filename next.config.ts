@@ -1,17 +1,16 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // outputFileTracingRoot: path.resolve(__dirname, '../../'),  // Uncomment and add 'import path from "path"' if needed
-  /* config options here */
-  allowedDevOrigins: ['*.dev.coze.site'],
-  images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '*',
-        pathname: '/**',
-      },
-    ],
+  // 禁用 Turbopack
+  experimental: {
+    turbo: undefined,
+  },
+  // 忽略工作区根目录警告
+  typescript: {
+    ignoreBuildErrors: false,
+  },
+  eslint: {
+    ignoreDuringBuilds: false,
   },
 };
 
