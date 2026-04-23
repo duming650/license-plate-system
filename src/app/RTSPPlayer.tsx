@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { toast } from 'sonner';
 
 interface RTSPPlayerProps {
@@ -22,19 +22,18 @@ export default function RTSPPlayer({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isUsingFFmpeg, setIsUsingFFmpeg] = useState(false);
 
-  // 初始化播放器
-  const initPlayer = useCallback(async () => {
+  // 初始化原生播放器
+  const initNativePlayer = useCallback(async () => {
     if (!videoRef.current || !url) return;
 
     try {
-      // 动态导入 rtsp-web-player
       const { default: RTSPWebPlayer } = await import('rtsp-web-player');
       
       playerRef.current = new RTSPWebPlayer({
         video: videoRef.current,
         rtspUrl: url,
-        // 摄像头通用配置（支持 H.264）
         options: {
           bufferSize: 5,
           decodeFirstFrame: true,
@@ -44,11 +43,13 @@ export default function RTSPPlayer({
         },
         onPlay: () => {
           console.log('RTSP 播放成功');
+          setIsUsingFFmpeg(false);
           onPlay?.();
         },
         onError: (error: Error) => {
           console.error('RTSP 播放错误:', error);
-          toast.error('摄像头连接失败，请检查 RTSP 地址');
+          // 原生播放失败，尝试 FFmpeg
+          initFFmpegPlayer();
         },
         onDisconnect: () => {
           console.log('RTSP 断开');
@@ -58,33 +59,99 @@ export default function RTSPPlayer({
 
       await playerRef.current.play();
     } catch (error) {
-      console.error('初始化播放器失败:', error);
-      toast.error('无法连接摄像头');
+      console.error('原生播放器失败:', error);
+      initFFmpegPlayer();
     }
   }, [url, onPlay, onStop]);
+
+  // 使用 FFmpeg 转码播放
+  const initFFmpegPlayer = useCallback(async () => {
+    if (!videoRef.current || !url || !videoRef.current.src) return;
+
+    try {
+      setIsUsingFFmpeg(true);
+      
+      // 创建 HLS 流地址（通过 API 代理）
+      const hlsUrl = `/api/stream?url=${encodeURIComponent(url)}`;
+      
+      // 动态加载 HLS.js
+      const Hls = (await import('hls.js')).default;
+      
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+        });
+        
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(videoRef.current);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log('HLS 流加载成功');
+          videoRef.current?.play();
+          onPlay?.();
+        });
+        
+        hls.on(Hls.Events.ERROR, (event: any, data: any) => {
+          console.error('HLS 错误:', data);
+          if (data.fatal) {
+            toast.error('视频流加载失败');
+          }
+        });
+        
+        playerRef.current = hls;
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari 原生支持 HLS
+        videoRef.current.src = hlsUrl;
+        videoRef.current.play();
+        onPlay?.();
+      }
+    } catch (error) {
+      console.error('FFmpeg 播放失败:', error);
+      toast.error('无法播放视频流');
+    }
+  }, [url, onPlay]);
+
+  // 初始化播放器
+  useEffect(() => {
+    if (!url) return;
+    
+    initNativePlayer();
+    
+    return () => {
+      if (playerRef.current) {
+        if (typeof playerRef.current.destroy === 'function') {
+          playerRef.current.destroy();
+        } else if (typeof playerRef.current.stop === 'function') {
+          playerRef.current.stop();
+        } else if (typeof playerRef.current.disconnect === 'function') {
+          playerRef.current.disconnect();
+        }
+        playerRef.current = null;
+      }
+    };
+  }, [url, initNativePlayer]);
 
   // 截取当前帧
   const captureSnapshot = useCallback((): string | null => {
     if (!videoRef.current || !canvasRef.current) return null;
 
     const video = videoRef.current;
-    const canvas = canvasRef.current;
 
     if (video.videoWidth === 0 || video.videoHeight === 0) {
       console.log('视频尚未加载完成');
       return null;
     }
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvasRef.current.width = video.videoWidth;
+    canvasRef.current.height = video.videoHeight;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return null;
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    // 返回 base64 图片数据
-    return canvas.toDataURL('image/jpeg', 0.8);
+    return canvasRef.current.toDataURL('image/jpeg', 0.9);
   }, []);
 
   // 处理自动截图
@@ -105,50 +172,43 @@ export default function RTSPPlayer({
     };
   }, [isAutoRecognize, captureSnapshot, onSnapshot]);
 
-  // 初始化
-  useEffect(() => {
-    initPlayer();
-
-    return () => {
-      // 清理
-      if (playerRef.current) {
-        playerRef.current.destroy();
-      }
-    };
-  }, [initPlayer]);
+  // 手动截图
+  const handleCapture = useCallback(() => {
+    const imageData = captureSnapshot();
+    if (imageData && onSnapshot) {
+      onSnapshot(imageData);
+      toast.success('截图完成');
+    } else {
+      toast.error('截图失败，视频未加载');
+    }
+  }, [captureSnapshot, onSnapshot]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full">
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        className="w-full h-full object-contain bg-black"
         playsInline
         muted
-        autoPlay
       />
       
       {/* 隐藏的画布用于截图 */}
       <canvas ref={canvasRef} className="hidden" />
       
-      {/* 播放控制栏 */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-        <div className="flex items-center justify-between text-white text-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span>实时播放</span>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <button
-              onClick={captureSnapshot}
-              className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded text-xs transition-colors"
-              title="截图"
-            >
-              截图
-            </button>
-          </div>
+      {/* 播放状态指示 */}
+      {isUsingFFmpeg && (
+        <div className="absolute top-2 left-2 px-2 py-1 bg-blue-500/80 text-white text-xs rounded">
+          FFmpeg 转码中
         </div>
-      </div>
+      )}
+      
+      {/* 手动截图按钮 */}
+      <button
+        onClick={handleCapture}
+        className="absolute bottom-2 right-2 px-3 py-1 bg-white/90 hover:bg-white text-gray-800 text-sm rounded shadow"
+      >
+        截图识别
+      </button>
     </div>
   );
 }
